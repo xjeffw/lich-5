@@ -6,7 +6,7 @@ elsif ARGV.find { |a| a =~ /^--no-wine$/i }
   $wine_bin = nil
 else
   begin
-    $wine_bin = `which wine`.strip
+    $wine_bin = ENV['PATH'].split(File::PATH_SEPARATOR).map { |dir| File.join(dir, 'wine') }.find { |file| File.executable?(file) && !File.directory?(file) }
   rescue
     $wine_bin = nil
   end

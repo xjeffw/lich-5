@@ -116,6 +116,11 @@ module Lich
               game_code: char_entry[:game_code]
             )
 
+            unless launch_data_hash.is_a?(Hash)
+              Lich.log "error: Authentication failed with message: #{launch_data_hash}"
+              return nil
+            end
+
             # Format and return launch data
             format_launch_data(launch_data_hash, char_entry)
           rescue StandardError => e

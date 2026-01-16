@@ -261,7 +261,7 @@ module Lich
 
       # Linux-specific PID resolution
       def self.resolve_linux_pid(pid)
-        return pid unless system('which xdotool > /dev/null 2>&1')
+        return pid unless ENV['PATH'].split(File::PATH_SEPARATOR).any? { |dir| File.executable?(File.join(dir, 'xdotool')) }
 
         p = pid
         16.times do
@@ -326,7 +326,7 @@ module Lich
 
       # macOS refocus implementation
       def self.refocus_macos(pid)
-        return false unless system('which osascript > /dev/null 2>&1')
+        return false unless ENV['PATH'].split(File::PATH_SEPARATOR).any? { |dir| File.executable?(File.join(dir, 'osascript')) }
 
         script = %{tell application "System Events" to set frontmost of (first process whose unix id is #{pid}) to true}
         _stdout, stderr, status = Open3.capture3('osascript', '-e', script)
@@ -344,7 +344,7 @@ module Lich
 
       # Linux refocus implementation
       def self.refocus_linux(pid)
-        return false unless system('which xdotool > /dev/null 2>&1')
+        return false unless ENV['PATH'].split(File::PATH_SEPARATOR).any? { |dir| File.executable?(File.join(dir, 'xdotool')) }
 
         _stdout, stderr, status = Open3.capture3('xdotool', 'search', '--pid', pid.to_s, 'windowactivate')
 

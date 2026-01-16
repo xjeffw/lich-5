@@ -124,7 +124,9 @@ module Lich
         end
 
         private_class_method def self.macos_keychain_available?
-          system('which security >/dev/null 2>&1')
+          ENV['PATH'].split(File::PATH_SEPARATOR).any? do |dir|
+            File.executable?(File.join(dir, 'security'))
+          end
         end
 
         private_class_method def self.store_macos_keychain(password)
@@ -147,9 +149,9 @@ module Lich
         end
 
         private_class_method def self.linux_keychain_available?
-          response = system('command -v secret-tool >/dev/null 2>&1')
-          Lich.log "debug: secret-tool command not found; Linux keychain unavailable" if response == false
-          response
+          ENV['PATH'].split(File::PATH_SEPARATOR).any? do |dir|
+            File.executable?(File.join(dir, 'secret-tool'))
+          end
         end
 
         private_class_method def self.store_linux_keychain(password)

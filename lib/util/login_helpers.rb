@@ -374,13 +374,14 @@ module Lich
           argv.each do |arg|
             next unless arg.start_with?('--')
             flag = arg.sub('--', '').downcase
-            if VALID_GAME_CODES.include?(flag.upcase)
+            flag_name = flag.split('=').first
+            if VALID_GAME_CODES.include?(flag_name.upcase)
               instance_flags_seen = true
-              resolved_instance = flag.upcase
+              resolved_instance = flag_name.upcase
               break
-            elsif VALID_FRONTENDS.include?(flag) # ignore anything else that isn't a valid game code
+            elsif VALID_FRONTENDS.include?(flag_name) # ignore anything else that isn't a valid game code
               next
-            elsif flag =~ /^(?:start-scripts|login)$/
+            elsif flag_name =~ /^(?:start-scripts|login|no-gui|gui|detachable-client|dark-mode|reconnect|reconnect-delay|host|hosts-file|hosts-dir|frontend|frontend-command|character|account|password|save|convert-entries|change-account-password|cap|add-account|aa|change-master-password|cmp|recover-master-password|rmp|change-encryption-mode|cem|master-password|mp|help|version|link-to-sge|unlink-from-sge|link-to-sal|unlink-from-sal|install|uninstall|without-frontend|frostbite|genie|gemstone|dragonrealms|platinum|shattered|fallen|test|reconnected|reconnect-step)$/
               next
             else
               instance_flags_seen = true # set to true so that we fall through to returning nil
