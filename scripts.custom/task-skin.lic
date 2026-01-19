@@ -1,0 +1,93 @@
+=begin
+  task-skin.lic: A script to loop requesting bounty tasks until a matching skinning task is found.
+
+  Usage: ;task-skin <substring1> [<substring2> ...]
+  Example: ;task-skin "giant rat" "large kobold"
+
+  author: Gemini
+  game: gs
+  tags: bounty, skinning
+  version: 0.2
+=end
+
+if script.vars.empty?
+  echo "Usage: ;task-skin <substring1> [<substring2> ...]"
+  exit
+end
+
+targets = script.vars[1..-1]
+
+unless Script.exists?('go2')
+  echo "Error: go2 script not found. Please download it using ;repository download go2"
+  exit
+end
+
+def find_npc_noun
+  # Find the first NPC available in the room. 
+  # These are objects wrapped in <pushBold/>...<popBold/> tags in the game's XML.
+  npc = GameObj.npcs.find { |n| n.name }
+  npc ? npc.noun : nil
+end
+
+echo "Monitoring for tasks containing: #{targets.join(', ')}"
+
+# Step 3: Loop requesting bounty tasks
+loop do
+  # Navigate to the bounty office
+  echo "Navigating to the bounty office..."
+  Script.run('go2', 'bounty')
+  sleep 0.5
+  
+  officer_noun = find_npc_noun
+  unless officer_noun
+    echo "Error: Could not find bounty officer NPC. Retrying in 10s..."
+    sleep 10
+    next
+  end
+
+  echo "Attempting to reset and request a new skinning bounty from #{officer_noun}..."
+  fput "ask #{officer_noun} for remov"
+  fput "ask #{officer_noun} for remov"
+  fput "ask #{officer_noun} for bounty skin"
+  
+  # Navigate to the furrier to check task details
+  echo "Navigating to the furrier..."
+  Script.run('go2', 'furrier')
+  sleep 0.5
+  
+  furrier_noun = find_npc_noun
+  unless furrier_noun
+    echo "Error: Could not find furrier NPC. Retrying in 10s..."
+    sleep 10
+    next
+  end
+
+  echo "Checking bounty details with #{furrier_noun}..."
+  clear
+  put "ask #{furrier_noun} for bounty"
+  
+  match_found = false
+  start_time = Time.now
+  # Loop for up to 2 seconds to find a match in the output
+  while Time.now - start_time < 2
+    line = get?
+    if line
+      if targets.any? { |t| line =~ /#{Regexp.escape(t)}/i }
+        match_found = true
+        break
+      end
+      # Break if we see a prompt, indicating the end of the NPC's response
+      break if line =~ /<prompt/ || line =~ /^>/
+    else
+      sleep 0.1
+    end
+  end
+
+  if match_found
+    echo "Matching bounty task found! Script complete."
+    break
+  end
+
+  echo "No match found. Retrying cycle..."
+  sleep 1
+end

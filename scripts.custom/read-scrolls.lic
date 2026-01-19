@@ -1,0 +1,70 @@
+# read-scrolls.lic
+container = script.vars[0]
+unless container
+  echo "Usage: ;read-scrolls <container>"
+  exit
+end
+
+important_spells = [613, 601, 618, 1202, 1204, 604, 406, 508, 606, 401, 916, 313, 101, 503, 913, 712, 513, 511, 507,
+                    202, 509, 107, 303, 103, 211, 911, 319, 315]
+                   .map { |s| "(#{s})" }
+
+spell_counts = {} # id_str => { id_str: id_str, name: name, count: count }
+scroll_count = 0
+
+hook_name = "read_scrolls_#{Time.now.to_i}"
+DownstreamHook.add(hook_name, proc { |line|
+  # Strip XML for parsing
+  stripped = line.gsub(/<.*?>/, '')
+
+  if stripped =~ /^On the .* you see/
+    scroll_count += 1
+  elsif stripped =~ /^ +(\([0-9]+\)) (.*)$/
+    id_str = $1
+    name = $2.strip
+    if spell_counts[id_str]
+      spell_counts[id_str][:count] += 1
+    else
+      spell_counts[id_str] = { id_str: id_str, name: name, count: 1 }
+    end
+  end
+  line
+})
+
+begin
+  Script.run("foreach", "scroll in my #{container};read")
+ensure
+  DownstreamHook.remove(hook_name)
+end
+
+sleep 0.5
+
+if spell_counts.empty?
+  respond "No spells found."
+else
+  unimportant, important = spell_counts.values.partition { |info| !important_spells.include?(info[:id_str]) }
+
+  # Sort from lowest to highest count
+  unimportant.sort_by! { |info| info[:count] }
+  important.sort_by! { |info| info[:count] }
+
+  output = []
+  output << '<output class="mono" />'
+
+  unimportant.each do |info|
+    output << "#{info[:count]}: #{info[:id_str]} #{info[:name]}"
+  end
+
+  output << "-------------------------------"
+
+  important.each do |info|
+    output << "#{info[:count]}: #{info[:id_str]} #{info[:name]}"
+  end
+
+  output << '<output class="" />'
+
+  _respond output.join("\n")
+
+  total_spell_instances = spell_counts.values.inject(0) { |sum, info| sum + info[:count] }
+  echo "Found #{total_spell_instances} spells on #{scroll_count} scrolls in '#{container}'"
+end
