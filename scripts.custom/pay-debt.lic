@@ -1,0 +1,10 @@
+# pay-debt.lic
+start_room = Room.current.id
+Script.run("go2", "bank")
+fput "withdraw 5000 silver"
+Script.run("go2", "debt")
+fput "pay 5000"
+Script.run("go2", "bank")
+fput "deposit all"
+fput "withdraw 100"
+Script.run("go2", start_room.to_s)

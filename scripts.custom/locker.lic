@@ -1,0 +1,18 @@
+# locker.lic
+Script.run("go2", "bank")
+fput "withdraw 1100 silver"
+Script.run("go2", "locker")
+
+4.times do
+  start_room = Room.current.id
+  fput "go opening"
+  # Give Lich a moment to process the room change
+  sleep 0.5
+  if Room.current.id != start_room
+    break
+  end
+  fput "east"
+  sleep 0.5
+end
+
+fput "open locker"
