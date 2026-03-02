@@ -9,4 +9,3 @@
 - `_respond` outputs raw text, including any XML tags, directly to the game client.
 - `respond` outputs plain text strings and should not be used for outputting XML.
 - `echo` outputs a highlighted log message prefixed with the script name, useful for script-level logging and status updates.
-- `lib/global_defs.rb`, `spec/games_spec.rb`, and `spec/infomon_spec.rb` have many generally useful global utility functions.

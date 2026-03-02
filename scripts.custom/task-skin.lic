@@ -7,83 +7,93 @@
   author: Gemini
   game: gs
   tags: bounty, skinning
-  version: 0.2
+  version: 0.3
 =end
 
-if script.vars.empty?
-  echo "Usage: ;task-skin <substring1> [<substring2> ...]"
+load "#{$script_dir}task-common.lic"
+
+def print_usage
+  wrap_mono <<~USAGE
+    Usage:
+      ;task-skin <substring1> [<substring2> ...]
+
+    Loops requesting bounty tasks until a matching skinning task is found.
+    Example: ;task-skin rat kobold
+  USAGE
+end
+
+if script.vars.empty? || script.vars.include?("help")
+  print_usage
   exit
 end
 
 targets = script.vars[1..-1]
 
-unless Script.exists?('go2')
+unless Script.exists?("go2")
   echo "Error: go2 script not found. Please download it using ;repository download go2"
   exit
 end
 
-def find_npc_noun
-  # Find the first NPC available in the room. 
-  # These are objects wrapped in <pushBold/>...<popBold/> tags in the game's XML.
-  npc = GameObj.npcs.find { |n| n.name }
-  npc ? npc.noun : nil
+# Enable XML to see prompts and other tags
+script.want_downstream_xml = true
+
+def find_guard_command_word
+  # Use the last NPC in the room and take the last word of their name.
+  npc = GameObj.npcs.reverse.find { |n| n.name }
+  return nil unless npc && npc.name
+  npc.name.split.last
 end
 
-echo "Monitoring for tasks containing: #{targets.join(', ')}"
-
-# Step 3: Loop requesting bounty tasks
-loop do
-  # Navigate to the bounty office
-  echo "Navigating to the bounty office..."
-  Script.run('go2', 'bounty')
-  sleep 0.5
-  
-  officer_noun = find_npc_noun
-  unless officer_noun
-    echo "Error: Could not find bounty officer NPC. Retrying in 10s..."
-    sleep 10
-    next
-  end
-
-  echo "Attempting to reset and request a new skinning bounty from #{officer_noun}..."
-  fput "ask #{officer_noun} for remov"
-  fput "ask #{officer_noun} for remov"
-  fput "ask #{officer_noun} for bounty skin"
-  
+def attempt_furrier_bounty(targets)
   # Navigate to the furrier to check task details
   echo "Navigating to the furrier..."
-  Script.run('go2', 'furrier')
+  Script.run("go2", "furrier")
   sleep 0.5
-  
-  furrier_noun = find_npc_noun
-  unless furrier_noun
-    echo "Error: Could not find furrier NPC. Retrying in 10s..."
-    sleep 10
-    next
+
+  furrier_word = find_guard_command_word
+  unless furrier_word
+    echo "Error: Could not find furrier NPC."
+    return false
   end
 
-  echo "Checking bounty details with #{furrier_noun}..."
+  echo "Checking bounty details with #{furrier_word}..."
   clear
-  put "ask #{furrier_noun} for bounty"
-  
+  put "ask #{furrier_word} for bounty"
+
   match_found = false
   start_time = Time.now
   # Loop for up to 2 seconds to find a match in the output
-  while Time.now - start_time < 2
+  loop do
     line = get?
     if line
-      if targets.any? { |t| line =~ /#{Regexp.escape(t)}/i }
+      if targets.any? { |t| line =~ /#{Regexp.escape(t)}/ }
         match_found = true
         break
       end
       # Break if we see a prompt, indicating the end of the NPC's response
+      # XML prompts look like <prompt time="...">&gt;</prompt>
       break if line =~ /<prompt/ || line =~ /^>/
+    elsif Time.now - start_time > 2
+      echo "Timeout waiting for furrier response."
+      break
     else
       sleep 0.1
     end
   end
+  match_found
+end
 
-  if match_found
+echo "Monitoring for tasks containing: #{targets.join(", ")}"
+
+# Step 3: Loop requesting bounty tasks
+loop do
+  unless request_bounty("skin")
+    echo "Retrying in 10s..."
+    sleep 10
+    next
+  end
+
+  if attempt_furrier_bounty(targets)
     echo "Matching bounty task found! Script complete."
     break
   end

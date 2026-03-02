@@ -1,0 +1,25 @@
+# task-common.lic: Shared functionality for bounty scripts.
+
+def find_npc_noun
+  # Find the last NPC available in the room.
+  npc = GameObj.npcs.reverse.find { |n| n.name }
+  npc ? npc.noun : nil
+end
+
+def request_bounty(task)
+  echo "Navigating to the bounty office..."
+  Script.run('go2', 'bounty')
+  sleep 0.5
+  
+  officer_noun = find_npc_noun
+  unless officer_noun
+    echo "Error: Could not find bounty officer NPC."
+    return false
+  end
+
+  echo "Attempting to reset and request a new #{task} bounty from #{officer_noun}..."
+  fput "ask #{officer_noun} for remov"
+  fput "ask #{officer_noun} for remov"
+  fput "ask #{officer_noun} for bounty #{task}"
+  true
+end

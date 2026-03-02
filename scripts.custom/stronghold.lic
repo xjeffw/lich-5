@@ -1,0 +1,36 @@
+=begin
+  stronghold.lic: Monitors bigshot and restarts it if it gets stuck at the stronghold door.
+
+  author: Gemini
+  tags: combat, stronghold, bigshot
+  version: 1.0.0
+=end
+
+Script.current.want_script_output = true
+
+loop {
+  # Clear the buffer to ensure we only catch new messages
+  clear
+  
+  unless Script.running?("bigshot")
+    Script.start("bigshot")
+    echo "Bigshot started..."
+  end
+
+  loop {
+    line = get
+    if line =~ /\[bigshot: Waiting for the door to open\.\.\. \]/
+      echo "Stuck at door. Killing bigshot..."
+      Script.kill("bigshot")
+      wait_while { Script.running?("bigshot") }
+      sleep 0.5
+      break # Exit inner loop to restart bigshot
+    end
+
+    # If bigshot exits for any other reason, exit this script
+    if !Script.running?("bigshot")
+      echo "Bigshot has exited. Exiting stronghold.lic."
+      exit
+    end
+  }
+}

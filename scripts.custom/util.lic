@@ -1,0 +1,181 @@
+# util.lic: General utility functions for scripts.
+
+def wrap_mono(text)
+  _respond "<output class=\"mono\"/>"
+  respond text
+  _respond "<output class=\"\"/>"
+end
+
+def stow_items
+  stowed_ids = []
+
+  [GameObj.left_hand, GameObj.right_hand].each do |item|
+    if item && item.id
+      fput "stow #{item.noun}"
+      stowed_ids << item.id
+    end
+  end
+
+  stowed_ids.reverse
+end
+
+def restore_items(stowed_ids)
+  return if stowed_ids.nil? || stowed_ids.empty?
+  stowed_ids.each do |id|
+    fput "get ##{id}"
+  end
+end
+
+def have_container?(name)
+  result = dothistimeout "look in my #{name}", 2, /^I could not find|^In the /
+  !!(result =~ /^In the /)
+end
+
+def stop_sorter
+  if Script.running?("sorter")
+    Script.kill("sorter")
+    true
+  else
+    false
+  end
+end
+
+TOWN_NAMES = ["wl", "imt", "sol", "rr"]
+
+def identify_town
+  return nil unless Room.current
+
+  location = Room.current.location
+  return nil if location.nil?
+
+  if location =~ /Wehnimer's Landing/
+    "wl"
+  elsif location =~ /Icemule Trace/
+    "imt"
+  elsif location =~ /Solhaven/
+    "sol"
+  elsif location =~ /River's Rest/
+    "rr"
+  elsif location =~ /Illistim/
+    "ill"
+  else
+    nil
+  end
+end
+
+def fputwait(command, fast = false)
+  res = fput command
+  sleep 0.2
+  waitrt?
+  waitcastrt?
+  sleep 0.2 unless fast
+  res
+end
+
+def find_default_container(item_type = "default")
+  was_xml = Script.current.want_downstream_xml
+  Script.current.want_downstream_xml = true
+
+  # Wait up to 5 seconds for the line matching the item_type
+  # Using a more flexible regex to handle potential extra tags or whitespace
+  success_regex = /<a [^>]*noun="([^"]*)"[^>]*>.*?\(#{Regexp.escape(item_type)}\)/i
+  line = dothistimeout "stow list", 5, success_regex
+
+  container_noun = nil
+  if line =~ success_regex
+    container_noun = $1
+  end
+
+  Script.current.want_downstream_xml = was_xml
+  container_noun
+end
+
+def resolve_room_number(room_spec)
+  return room_spec if room_spec.is_a?(Integer)
+  spec = room_spec.to_s.strip
+  return spec.to_i if spec =~ /^[0-9]+$/
+
+  # UID handling
+  if spec =~ /^u(\d+)$/i
+    uid = $1.to_i
+    if defined?(Map.ids_from_uid)
+      return Map.ids_from_uid(uid).first
+    end
+  end
+
+  # Custom targets (matching go2's logic)
+  # Fetch go2's settings to access its custom targets
+  go2_settings = Lich::Common::DB_Store.get_data(XMLData.game, "go2")
+  custom_targets = go2_settings["custom targets"] || {}
+
+  if (target = custom_targets.keys.find { |key| key.casecmp?(spec) }) || (target = custom_targets.keys.find { |key| key.downcase.start_with?(spec.downcase) })
+    destination_id = custom_targets[target]
+    if destination_id.is_a?(Array)
+      return Room.current.find_nearest(destination_id.uniq)
+    else
+      return destination_id
+    end
+  end
+
+  # Tags
+  target_list = Map.list.find_all { |r| r.tags.include?(spec.downcase) }.collect(&:id)
+  unless target_list.empty?
+    return Room.current.find_nearest(target_list)
+  end
+
+  nil
+end
+
+def resolve_room(room_spec)
+  id = resolve_room_number(room_spec)
+  return nil unless id
+  Map[id]
+end
+
+def teleportation_zone_for_location(loc)
+  return nil if loc.nil? || loc.empty?
+
+  case loc
+  when /Wehnimer's Landing|Solhaven|Icemule Trace|Pinefar|Khazar's Hold/i
+    1
+  when /Cysaegir|Ta'Illistim|Ta'Vaalor|Zhindel's Post/i
+    2
+  when /Teras Isle/i
+    3
+  when /River's Rest/i
+    4
+  when /Kraken's Fall/i
+    5
+  when /Zul Logoth/i
+    6
+  when /The Broken Lands/i
+    7
+  when /Elemental Confluence/i
+    8
+  when /The Rift/i
+    9
+  when /Shadow Valley/i
+    10
+  when /Old Ta'Faendryl/i
+    11
+  when /Sanctum of Scales/i
+    12
+  else
+    # Assign a unique ID for other isolated areas based on the location name
+    (loc.hash % 1000) + 100
+  end
+end
+
+def resolve_location(loc)
+  return nil if loc.nil? || loc.empty?
+
+  names = [
+    "Wehnimer's Landing", "Solhaven", "Icemule Trace", "Pinefar", "Khazar's Hold",
+    "Cysaegir", "Ta'Illistim", "Ta'Vaalor", "Zhindel's Post",
+    "Teras Isle", "River's Rest", "Kraken's Fall", "Zul Logoth",
+    "The Broken Lands", "Elemental Confluence", "The Rift", "Shadow Valley",
+    "Old Ta'Faendryl", "Sanctum of Scales",
+  ]
+
+  names.find { |name| loc =~ /#{Regexp.escape(name)}/i } || loc
+end

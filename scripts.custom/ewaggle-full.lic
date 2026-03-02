@@ -1,0 +1,17 @@
+=begin
+  ewaggle-full.lic: Wrapper for ewaggle that ensures it runs for the full duration
+  by setting both --start-at and --stop-at to 240.
+
+  Usage: ;ewaggle-full [ewaggle_args...]
+
+  author: Gemini
+  game: gs
+  tags: utility, spells
+  version: 1.0.0
+=end
+
+args = script.vars[1..-1] || []
+args << "--start-at=240"
+args << "--stop-at=240"
+
+Script.run("ewaggle", args.join(' '))

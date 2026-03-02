@@ -1,0 +1,198 @@
+=begin
+  Automates the process of selling boxes at River's Rest (and potentially other towns if configured).
+  Follows the workflow: Bank -> Box Office (Give/Return) -> Gemshop -> Town.
+
+  author: Gemini
+  game: Gemstone
+  tags: merchant, boxes, loot
+  version: 1.0.1
+=end
+
+# Load utility functions
+util_path = File.join(LICH_DIR, "scripts.custom", "util.lic")
+if File.exist?(util_path)
+  load util_path
+else
+  echo "Error: Could not find #{util_path}. Please ensure scripts.custom/util.lic exists."
+  exit
+end
+
+TOWN_BOXES_ROOMS = {
+  "wl" => "easttower",
+  "rr" => "rr-boxes",
+  "ill" => "locksmith pool",
+  "imt" => "locksmith pool",
+}
+
+TOWN_BOX_NPCS = {
+  "wl" => "worker",
+  "rr" => "woman",
+  "ill" => "gnome",
+  "imt" => "trickster",
+}
+
+TOWN_BOX_WASTEBASKET = {
+  "wl" => "wastebasket",
+  "rr" => "crate",
+  "ill" => "barrel",
+  "imt" => "barrel",
+}
+
+current_town = identify_town
+if current_town.nil?
+  echo "Error: Could not identify current town or town is not supported."
+  exit
+end
+
+boxes_room = TOWN_BOXES_ROOMS[current_town]
+box_npc = TOWN_BOX_NPCS[current_town]
+box_wastebasket = TOWN_BOX_WASTEBASKET[current_town]
+
+if boxes_room.nil? || box_npc.nil? || box_wastebasket.nil?
+  echo "Error: No box office configuration for town: #{current_town}"
+  exit
+end
+
+if Script.running?("sonic-weapon")
+  Script.pause("sonic-weapon")
+  before_dying { Script.unpause("sonic-weapon") }
+end
+
+def loot_box(box, wastebasket)
+  res = dothistimeout "open ##{box.id}", 3, /^You open|^That is already open/
+  if res.nil?
+    echo "Error: Failed to open box."
+    return
+  end
+
+  fputwait "get coins from ##{box.id}"
+  waitrt?
+  fputwait "loot ##{box.id}"
+  waitrt?
+
+  # Try to trash the box
+  dothistimeout "put ##{box.id} in #{wastebasket}", 3, /^As you place|^You put|^I could not find/
+
+  # If we still have the box (e.g. crate full or missing), stow it or warn?
+  # Prompt says "stow items in case box couldn't be put in crate"
+  # We check if we are still holding the specific box
+  if GameObj.right_hand.id == box.id || GameObj.left_hand.id == box.id
+    echo "Could not put box in #{wastebasket}. Stowing it."
+    stow_items
+  end
+end
+
+# 0. Initial Sell
+Script.run("eloot", "sell")
+
+# 1. Bank Interaction
+Script.run("go2", "bank")
+fputwait "deposit all", true
+result = dothistimeout "withdraw 10000 silver", 3, /^The teller carefully records/
+if result.nil?
+  echo "Error: Failed to withdraw silver."
+  exit
+end
+
+# 2. Deposit and return boxes from locksmith pool
+Script.run("go2", boxes_room)
+stowed_ids = stow_items
+before_dying { restore_items(stowed_ids) }
+
+box_nouns = ["box", "strongbox", "coffer", "chest", "trunk"]
+
+# Give boxes to merchant
+box_nouns.each do |noun|
+  loop do
+    result = dothistimeout "get my #{noun}", 3, /^You remove|^Get what\?|^You already/
+    if result =~ /^Get what\?/
+      break
+    elsif result =~ /^You remove|^You already/
+      # We have the box in hand
+      box = [GameObj.right_hand, GameObj.left_hand].find { |obj| obj.noun == noun }
+
+      if box
+        res = dothistimeout "give #{box_npc} 10 percent confirm", 3, /^(.*) takes|is already/
+        if res =~ /is already/
+          echo "Box is already open. Looting it myself."
+          loot_box(box, box_wastebasket)
+        elsif res.nil?
+          echo "Error: Failed to give box to merchant."
+          exit
+        end
+      end
+    end
+  end
+end
+
+fputwait "ask #{box_npc} for list"
+
+# Return and process boxes
+loop do
+  result = dothistimeout "ask #{box_npc} for return", 3, /^(.*) says, "Alright, here's|^(.*) says, "We don't have/
+  break if result =~ /^(.*) says, "We don't have/
+
+  if result =~ /^(.*) says, "Alright, here's/
+    sleep 0.1
+    # The box should be in the right hand (or left if right full)
+    # We'll check both hands to find the box object
+    box = [GameObj.right_hand, GameObj.left_hand].find { |obj| obj.noun =~ /box|strongbox|coffer|chest|trunk/ }
+
+    if box
+      loot_box(box, box_wastebasket)
+    else
+      echo "Error: Returned box not found in hands."
+    end
+  end
+end
+
+# 3. Sell ingots at gemshop
+Script.run("go2", "gemshop")
+loop do
+  result = dothistimeout "get my ingot", 3, /^You remove|^Get what\?/
+  break if result =~ /^Get what\?/
+  res = dothistimeout "sell ingot", 3, /^(?:The jeweler|The gem dealer) .* takes|^You ask/
+  if res.nil?
+    echo "Error: Failed to sell ingot."
+    exit
+  end
+end
+
+# 4. Sell items from boxes
+Script.run("eloot", "sell")
+
+# 5. Dispose of clothing in default container
+default_container = find_default_container
+if default_container
+  # Enable capturing of other script output
+  was_script_output = Script.current.want_script_output
+  Script.current.want_script_output = true
+
+  # Clear buffer before running to ensure we only get new output
+  clear
+  Script.run("foreach", "clothing in my #{default_container}")
+
+  # Scan script output for "Total items: <count>"
+  count = 0
+  clear.each do |line|
+    if line =~ /Total items: (\d+)/
+      count = $1.to_i
+    end
+  end
+
+  # Restore previous setting
+  Script.current.want_script_output = was_script_output
+
+  if count > 0
+    echo "Found #{count} pieces of clothing. Disposing..."
+    Script.run("go2", boxes_room)
+    Script.run("foreach", "clothing in my #{default_container};get ITEM;put ITEM in #{box_wastebasket}")
+    fputwait "stow all"
+    fputwait "gird"
+  end
+else
+  echo "Warning: Could not identify default container for clothing disposal."
+end
+
+# 6. Go to town to rest
+Script.run("go2", "town")

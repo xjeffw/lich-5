@@ -1,0 +1,36 @@
+# buy-orbs.lic
+load "#{$script_dir}util.lic"
+
+$did_pause_bigshot = false
+if Script.running?("bigshot")
+  Script.pause("bigshot")
+  $did_pause_bigshot = true
+end
+
+before_dying {
+  Script.unpause("bigshot") if $did_pause_bigshot && Script.running?("bigshot")
+}
+
+initial_room = Room.current.id
+pawnshop_room_for_town = { "wl" => 409, "imt" => 2463, "sol" => 5712, "rr" => 10950, "ill" => 4599 }
+
+town = identify_town
+pawnshop_room = pawnshop_room_for_town[town]
+
+unless pawnshop_room
+  echo "Error: Unknown town or no pawnshop room defined for #{town || 'unidentified town'}."
+  exit
+end
+
+Script.run("go2", "bank")
+fput "withdraw 5000 silvers"
+
+Script.run("go2", pawnshop_room.to_s)
+
+2.times {
+  fput "buy quartz orb"
+  fput "put my orb in my robe"
+}
+
+Script.run("deposit")
+Script.run("go2", initial_room.to_s)

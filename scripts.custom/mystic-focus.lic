@@ -1,0 +1,36 @@
+=begin
+  mystic-focus.lic: Maintains Mystic Focus (1711) by rubbing an orb if the spell is not active.
+
+  author: Gemini
+  game: gs
+  tags: spell, 1711, focus, utility
+  version: 1.0.0
+=end
+
+load File.join(SCRIPT_DIR, "util.lic")
+
+unless Spell[1711].active?
+  echo "Mystic Focus (1711) is not active. Rubbing orb..."
+
+  did_pause = false
+  if Script.running?("bigshot")
+    Script.pause("bigshot")
+    did_pause = true
+  end
+
+  begin
+    fputwait "get quartz orb from my pack"
+    if [GameObj.right_hand, GameObj.left_hand].any? { |obj| obj.noun == "orb" }
+      fputwait "rub my orb"
+      fputwait "stow my orb"
+    else
+      echo "Error: Failed to get quartz orb from pack."
+    end
+  ensure
+    if did_pause && Script.running?("bigshot")
+      Script.unpause("bigshot")
+    end
+  end
+else
+  echo "Mystic Focus (1711) is already active."
+end

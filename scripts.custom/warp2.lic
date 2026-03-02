@@ -1,0 +1,135 @@
+=begin
+  warp2.lic: Enhanced go2 with automatic sorcerer teleporting.
+  If profession is Sorcerer and level >= 40, uses teleportation.
+  Otherwise, falls back to normal go2.
+
+  author: Gemini
+  game: Gemstone
+  tags: movement, teleport
+  version: 1.0.0
+=end
+
+# Load utility functions
+load "#{$script_dir}util.lic"
+
+LOCATION_TELEPORT_NUMBERS = {
+  "Wehnimer's Landing" => 3,
+  "Icemule Trace" => 5,
+  "Solhaven" => 6,
+}
+
+TELEPORT_FROM_ROOMS = {
+  "Wehnimer's Landing" => 223,
+  "Icemule Trace" => 2412,
+  "Solhaven" => 149,
+}
+
+def have_teleport
+  Stats.prof == "Sorcerer" && Stats.level >= 40
+end
+
+def have_teleport_upgrade
+  have_teleport && Skills.sldemonology >= 75
+end
+
+def teleport_to_location(location)
+  # Find the town key that matches or is contained within the location string
+  target_town = LOCATION_TELEPORT_NUMBERS.keys.find { |town| location =~ /#{Regexp.escape(town)}/i }
+  num = LOCATION_TELEPORT_NUMBERS[target_town]
+
+  if num
+    Script.run("teleport", num.to_s)
+    if rift_created?
+      fput "stow hands"
+      fput "go rift"
+      return true
+    else
+      echo "Failed to create rift."
+      return false
+    end
+  else
+    echo "Error: No teleport number defined for location: #{location}"
+    return false
+  end
+end
+
+def target_within_zone?(room_spec)
+  target_room = resolve_room(room_spec)
+  return false if target_room.nil? || target_room.location.nil?
+  return false if Room.current.nil? || Room.current.location.nil?
+
+  current_zone = teleportation_zone_for_location(Room.current.location)
+  target_zone = teleportation_zone_for_location(target_room.location)
+
+  !current_zone.nil? && current_zone == target_zone
+end
+
+def target_within_realm?(room_spec)
+  target_room = resolve_room(room_spec)
+  return false if target_room.nil? || target_room.location.nil?
+  return false if Room.current.nil? || Room.current.location.nil?
+
+  resolve_location(Room.current.location) == resolve_location(target_room.location)
+end
+
+def rift_created?
+  res = dothistimeout "look rift", 3, /rift|I could not find/
+  res =~ /rift/i && res !~ /I could not find/i
+end
+
+def print_warp2_usage
+  wrap_mono <<~USAGE
+    Usage:
+      ;warp2 [target]
+
+    Enhanced go2 with automatic sorcerer teleporting between towns.
+  USAGE
+end
+
+if defined?(script) && script.name.casecmp("warp2") == 0
+  if script.vars[1].nil? || script.vars.include?("help") || script.vars.length > 2
+    print_warp2_usage
+    exit
+  end
+
+  # Resolve destination
+  target = script.vars[1]
+  room = resolve_room(target)
+
+  if room.nil?
+    echo "Error: Could not resolve target: #{target}"
+    exit
+  end
+
+  current_realm = resolve_location(Room.current.location)
+  current_zone = teleportation_zone_for_location(Room.current.location)
+  target_realm = resolve_location(room.location)
+  target_zone = teleportation_zone_for_location(room.location)
+  has_upgrade = have_teleport_upgrade
+
+  echo "Current location: #{current_realm} (Zone #{current_zone})"
+  echo "Target location:  #{target_realm} (Zone #{target_zone})"
+  echo "Teleport upgrade: #{has_upgrade}"
+
+  if has_upgrade
+    if target_within_realm?(target)
+      echo "Target is within the same realm. Using go2."
+      Script.run("go2", target)
+    elsif target_within_zone?(target)
+      echo "Target is in a different realm but same zone. Attempting teleport..."
+      if teleport_to_location(room.location)
+        echo "Teleport successful. Finalizing movement with go2."
+        Script.run("go2", target)
+      else
+        echo "Teleport failed. Falling back to walking with go2."
+        Script.run("go2", target)
+      end
+    else
+      echo "Target is in a different zone. Walking with go2."
+      Script.run("go2", target)
+    end
+  else
+    echo "No teleport upgrade available. Walking with go2."
+    Script.run("go2", target)
+  end
+end

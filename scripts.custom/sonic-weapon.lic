@@ -1,0 +1,65 @@
+=begin
+
+  sonic-weapon.lic: Automatically maintains Sonic Weapon (1012) as a lance.
+  Checks every second and pauses bigshot during the singing process.
+
+  author: Gemini
+  game: gs
+  tags: bard, sonic, weapon
+  version: 1.0.0
+
+=end
+
+loop {
+  if Script.running?("bigshot")
+    if GameObj.left_hand.noun == "lance"
+      fput "swap"
+    end
+
+    if !Spell[1012].active?
+      sleep 1
+      Script.pause("bigshot")
+
+      wait_while { Script.running?("ewaggle") }
+
+      3.times { |i|
+        loop {
+          prep_res = dothistimeout "prep 1012", 3, /You already have|Your spellsong is ready/
+          if prep_res =~ /You already have/
+            fput "release"
+          else
+            break
+          end
+        }
+
+        sleep 0.1
+        # Verify spell is prepared
+        if checkprep("Sonic Weapon")
+          res = dothistimeout "sing lance", 3, /^You weave|^You sing/
+          if res =~ /^You sing/
+            echo "Singing failed or interrupted. Pausing script for manual intervention."
+            Script.pause
+          else
+            # Post-singing hand management
+            sleep 0.1
+            if GameObj.left_hand.noun == "lance"
+              fput "swap"
+            end
+            fput "stow left" if !GameObj.left_hand.id.nil?
+          end
+          break # Successfully prepared and sang (or paused)
+        else
+          echo "Error: Spell 1012 not prepared correctly. Retry #{i + 1}/3..."
+          waitcastrt?
+          sleep 1
+        end
+      }
+
+      # Small delay to ensure the spell registers as active before unpausing
+      sleep 0.5
+
+      Script.unpause("bigshot")
+    end
+  end
+  sleep 1
+}

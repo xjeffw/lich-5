@@ -1,17 +1,33 @@
 # locker.lic
+load "#{$script_dir}util.lic"
+
+TOWN_OPENINGS = {
+  "wl" => "opening",
+  "imt" => "curtain"
+}
+
+TOWN_DIRECTIONS = {
+  "wl" => ["east", "east", "east", "east"],
+  "imt" => ["ne", "se", "sw", "se"]
+}
+
+town = identify_town || "wl"
+opening = TOWN_OPENINGS[town] || "opening"
+directions = TOWN_DIRECTIONS[town] || ["east", "east", "east", "east"]
+
 Script.run("go2", "bank")
 fput "withdraw 1100 silver"
 Script.run("go2", "locker")
 
-4.times do
+directions.each do |dir|
   start_room = Room.current.id
-  fput "go opening"
+  fput "go #{opening}"
   # Give Lich a moment to process the room change
   sleep 0.5
   if Room.current.id != start_room
     break
   end
-  fput "east"
+  fput dir
   sleep 0.5
 end
 

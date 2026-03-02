@@ -1,0 +1,12 @@
+# exit-on-death.lic
+# Periodically checks character status and exits the game if dead.
+
+loop do
+  if dead?
+    echo "Character is dead. About to exit..."
+    sleep 5
+    fput "exit"
+    break
+  end
+  sleep 2
+end

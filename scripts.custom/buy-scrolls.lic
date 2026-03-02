@@ -1,0 +1,261 @@
+# buy-scrolls.lic
+load "#{$script_dir}read-scrolls.lic"
+load "#{$script_dir}teleport.lic"
+load "#{$script_dir}warp2.lic"
+load "#{$script_dir}util.lic"
+
+$did_pause_bigshot = false
+if Script.running?("bigshot")
+  Script.pause("bigshot")
+  $did_pause_bigshot = true
+end
+
+$start_time = Time.now
+pawnshop_room_for_town = { "wl" => 409, "imt" => 2463, "sol" => 5712, "rr" => 10950, "ill" => 4599 }
+$bought_scrolls = []
+$bought_orbs = 0
+$bought_statues = 0
+
+def buy_pawnshop_item(item_name)
+  item_noun = item_name.split.last
+  count = 0
+  2.times {
+    fputwait "buy #{item_name}"
+    sleep 0.25
+    item = [GameObj.left_hand, GameObj.right_hand].find { |obj| obj.noun == item_noun }
+    if item
+      count += 1
+      ["dark bag", "robe", "cloak"].each { |container|
+        fputwait "put my #{item_noun} in my #{container}"
+        sleep 0.25
+        break unless [GameObj.left_hand, GameObj.right_hand].any? { |obj| obj.id == item.id }
+      }
+    else
+      break
+    end
+  }
+  count
+end
+
+def buy_orbs_and_statues
+  $bought_orbs += buy_pawnshop_item("quartz orb") if $buy_orbs
+  $bought_statues += buy_pawnshop_item("small statue") if $buy_statues
+end
+
+def withdraw_note
+  Script.run("go2", "bank")
+  stow_items
+  fput "withdraw 100000"
+end
+
+def deposit_note
+  Script.run("go2", "bank")
+  fput "get my note"
+  fput "deposit note"
+end
+
+def buy_scrolls_for_town(town, pawnshop_room_for_town)
+  pawnshop_room = pawnshop_room_for_town[town.downcase]
+  unless pawnshop_room
+    echo "Unknown town: #{town}. Known towns: #{pawnshop_room_for_town.keys.join(", ")}"
+    return
+  end
+
+  Script.run("go2", pawnshop_room.to_s) unless identify_town == town.downcase
+  withdraw_note
+  Script.run("go2", pawnshop_room.to_s)
+
+  adj = find_table_adjective
+  if adj
+    table_name = "#{adj} table"
+    echo "Found #{table_name}. Reading scrolls..."
+    scrolls = ReadScrolls.read_scrolls(table_name)
+    counts = scroll_important_counts(scrolls)
+    print_important_counts(counts)
+    sleep 1
+    buy_scrolls(counts)
+  else
+    echo "Could not find a magic or arcana table in this room."
+  end
+
+  buy_orbs_and_statues if $buy_orbs || $buy_statues
+
+  deposit_note
+
+  fput "gird"
+end
+
+def find_table_adjective
+  table = (GameObj.room_desc + GameObj.loot).find { |obj| obj.name =~ /\b(magic|arcana) table\b/i }
+  if table && table.name =~ /(magic|arcana)/i
+    return $1.downcase
+  end
+  nil
+end
+
+def scroll_important_counts(scrolls)
+  values = {}
+  scrolls.each_with_index do |scroll, index|
+    next if scroll[:name] =~ /^table/i
+    total_value = ::ReadScrolls.scroll_value(scroll[:spells])
+    # Using name and index to handle potential duplicate names on the table
+    values["#{scroll[:name]} (##{index + 1})"] = total_value
+  end
+  values
+end
+
+def print_important_counts(counts)
+  if counts.empty?
+    respond "No scrolls found to analyze."
+    return
+  end
+
+  output = []
+  output << '<output class="mono" />'
+  output << sprintf("%-40s | %s", "Scroll Name", "Total Value")
+  output << "-" * 60
+
+  # Sort by value descending
+  counts.sort_by { |_name, value| -value }.each do |name, value|
+    output << sprintf("%-40s | %.1f", name, value)
+  end
+  output << '<output class="" />'
+
+  _respond output.join("\n")
+end
+
+def scroll_container_name
+  if have_container?("dark bag")
+    "dark bag"
+  elsif have_container?("robe")
+    "robe"
+  elsif have_container?("cloak")
+    "cloak"
+  else
+    nil
+  end
+end
+
+def print_summary
+  echo "Total time: #{(Time.now - $start_time).round(2)}s"
+  echo "Total scrolls bought: #{$bought_scrolls.length}"
+  $bought_scrolls.each { |name| respond "  - #{name}" }
+  echo "Total quartz orbs bought: #{$bought_orbs}" if $buy_orbs
+  echo "Total small statues bought: #{$bought_statues}" if $buy_statues
+end
+
+def buy_scrolls(values)
+  return if values.empty? || values.values.all? { |v| v < 2.0 }
+  container = scroll_container_name
+  unless container
+    echo "Error: No suitable container found (dark bag, robe, or cloak) to put scrolls in. Aborting buy."
+    return
+  end
+  values.each do |name_with_index, value|
+    if value >= 2.0
+      echo name_with_index
+      if name_with_index =~ /^(.*) .*/
+        full_name = $1
+        words = full_name.split(" ")
+        scroll_name = "#{words.first} #{words.last}"
+        echo "Buying #{scroll_name} (Total value: #{value})"
+        fput "buy #{scroll_name}"
+        fput "put #{scroll_name} in my #{container}"
+        $bought_scrolls << full_name
+      end
+    end
+  end
+end
+
+def buy_scrolls_usage
+  wrap_mono <<~USAGE
+    Checks pawnshops to buy valuable scrolls, and optionally buys heavy quartz orbs or small statues.
+
+    Usage:
+      ;buy-scrolls [town|all|loop] [warp] [orb|statue|every]
+
+    town:    [wl | imt | sol | rr | ill]
+    all:     visits wl, imt, and sol
+    loop:    continuously cycles through towns
+    warp:    uses teleportation for travel
+    orb:     buys quartz orbs when buying scrolls
+    statue:  buys small statues when buying scrolls
+    every:   buys orbs and statues
+  USAGE
+end
+
+before_dying {
+  print_summary
+  Script.unpause("bigshot") if $did_pause_bigshot && Script.running?("bigshot")
+}
+
+# Top-level script logic
+args = script.vars[1..-1].map(&:downcase)
+$buy_orbs = args.include?("every") || args.include?("orb") || args.include?("orbs")
+$buy_statues = args.include?("every") || args.include?("statue") || args.include?("statues")
+use_warp = args.include?("warp")
+primary_arg = args.find { |a| !["every", "warp", "orb", "orbs", "statue", "statues"].include?(a) }
+
+if args.include?("help") || (primary_arg && !["loop", "all"].include?(primary_arg) && !pawnshop_room_for_town.keys.include?(primary_arg))
+  buy_scrolls_usage
+  exit
+end
+
+if primary_arg == "loop"
+  loop do
+    ["wl", "imt", "sol"].each do |town|
+      buy_scrolls_for_town(town, pawnshop_room_for_town)
+    end
+  end
+elsif primary_arg == "all"
+  if use_warp && have_teleport_upgrade
+    echo "Waiting for mana (120+) for teleportation..." if Char.mana < 120
+    wait_until { Char.mana >= 120 }
+  end
+  start_room_id = Room.current.id
+  ["wl", "imt", "sol"].each do |town|
+    pawnshop_room = pawnshop_room_for_town[town]
+    use_warp_now = use_warp || (town == "sol" && Char.mana >= 40)
+    if use_warp_now && have_teleport_upgrade && !target_within_realm?(pawnshop_room) && target_within_zone?(pawnshop_room)
+      # Navigate to the appropriate starting room for teleportation
+      current_loc = resolve_location(Room.current.location)
+      from_room = ::TELEPORT_FROM_ROOMS[current_loc]
+      Script.run("go2", from_room.to_s) if from_room
+
+      target_room = resolve_room(pawnshop_room)
+      teleport_to_location(target_room.location) if target_room
+    end
+
+    buy_scrolls_for_town(town, pawnshop_room_for_town)
+  end
+  if use_warp
+    Script.run("warp2", start_room_id.to_s)
+  else
+    Script.run("go2", start_room_id.to_s)
+  end
+elsif primary_arg
+  start_room_id = Room.current.id
+  buy_scrolls_for_town(primary_arg, pawnshop_room_for_town)
+  Script.run("go2", start_room_id.to_s)
+else
+  town = identify_town
+  if town
+    start_room_id = Room.current.id
+    buy_scrolls_for_town(town, pawnshop_room_for_town)
+    Script.run("go2", start_room_id.to_s)
+  else
+    adj = find_table_adjective
+    if adj
+      table_name = "#{adj} table"
+      echo "Found #{table_name}. Reading scrolls..."
+      scrolls = ReadScrolls.read_scrolls(table_name)
+      counts = scroll_important_counts(scrolls)
+      print_important_counts(counts)
+      sleep 1
+      buy_scrolls(counts)
+      buy_orbs_and_statues if $buy_orbs || $buy_statues
+    else
+      echo "Could not identify current town and could not find a magic or arcana table in this room."
+    end
+  end
+end

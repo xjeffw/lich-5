@@ -1,0 +1,79 @@
+=begin
+  cast-scroll.lic: Rummages for a scroll with a specific spell, invokes and casts it multiple times, then stows it.
+
+  Usage: ;cast-scroll <container> <spell_number> [<count>]
+  Example: ;cast-scroll "backpack" 101 5
+
+  author: Gemini
+  game: gs
+  tags: scroll, cast, magic
+  version: 0.1
+=end
+
+def print_usage
+  wrap_mono <<~USAGE
+    Usage:
+      ;cast-scroll <container> <spell_number> [<count>]
+
+    Rummages for a scroll with a specific spell, invokes and casts it multiple times.
+    Example: ;cast-scroll backpack 101 5
+  USAGE
+end
+
+if script.vars.include?("help") || script.vars.length < 3 || script.vars.length > 4
+  print_usage
+  exit
+end
+
+container = script.vars[1]
+spell_num = script.vars[2]
+count = (script.vars[3] || 1).to_i
+
+# Enable XML to see prompts and other tags
+script.want_downstream_xml = true
+
+echo "Rummaging in #{container} for spell #{spell_num}..."
+clear
+put "rummage in my #{container} for spell #{spell_num}"
+
+scroll_noun = nil
+match_found = false
+start_time = Time.now
+
+loop do
+  line = get?
+  if line
+    if line =~ /and remove an? (.*) with/
+      full_name = $1.gsub(/<[^>]+>/, "").strip
+      scroll_noun = full_name.split.last
+      match_found = true
+      break
+    elsif line =~ /can't seem to locate/
+      echo "No scroll with #{spell_num} in #{container}."
+      exit
+    end
+  elsif Time.now - start_time > 2
+    echo "Timed out waiting for rummage response."
+    exit
+  else
+    sleep 0.1
+  end
+end
+
+unless match_found && scroll_noun
+  echo "Could not find scroll or identify its noun."
+  exit
+end
+
+echo "Found #{scroll_noun}. Beginning cast loop (#{count} times)..."
+
+count.times do |i|
+  echo "Processing cast #{i + 1} of #{count}..."
+  fput "invoke #{spell_num}"
+  fput "cast"
+  sleep 1
+  waitcastrt?
+end
+
+fput "put my #{scroll_noun} in my #{container}"
+echo "Script complete."

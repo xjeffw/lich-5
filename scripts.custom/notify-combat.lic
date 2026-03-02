@@ -1,0 +1,153 @@
+=begin
+  Monitors combat status (HP and Stun) and sends system notifications via notify-send.
+  Checks once per second.
+  
+  author: Gemini
+  tags: combat, notification, linux
+  version: 1.0.7
+=end
+
+# Load utility functions
+util_path = File.join(LICH_DIR, "scripts.custom", "util.lic")
+if File.exist?(util_path)
+  load util_path
+else
+  echo "Error: Could not find #{util_path}. Please ensure scripts.custom/util.lic exists."
+  exit
+end
+
+unless RUBY_PLATFORM =~ /linux/
+  echo "This script is intended for Linux systems with notify-send."
+  # We don't exit, just warn, in case they have a compatible shim.
+end
+
+# spawn("mpv-unwrapped /etc/profiles/per-user/jeff/share/sounds/elementary/stereo/dialog-information.oga")
+# spawn("notify-send 'GSIV: notify-combat started'")
+
+# Initialize state
+@last_hp = checkhealth
+@last_stunned = checkstunned
+@stun_duration = "unknown"
+@was_emergency = false
+@sacrifice_shift_detected = false
+@restoration_disabled = false
+
+def on_sacrifice_shift
+  echo "Sacrifice shift successful! Executing recovery sequence."
+  Script.kill("bigshot") if Script.running?("bigshot")
+  Script.run("heal-in-town")
+  Script.run("go2", "town")
+end
+
+# Hook to catch stun duration and shift success from game lines
+action = proc { |server_string|
+  if server_string =~ /stunned for (\d+) rounds/
+    @stun_duration = "#{$1} rounds"
+  end
+  if server_string =~ /At last, you arrive at your destination/
+    @sacrifice_shift_detected = true
+  end
+  if server_string =~ /You strain to perform the symbol of .* but you are unable to call forth enough power\./
+    @restoration_disabled = true
+    echo "Symbol use disabled: unable to call forth enough power."
+  end
+  server_string
+}
+DownstreamHook.add("notify_combat_stun", action)
+before_dying { DownstreamHook.remove("notify_combat_stun") }
+
+echo "Notify-Combat script started for #{XMLData.name}."
+echo "Monitoring HP and Stun status..."
+
+loop do
+  begin
+    if @sacrifice_shift_detected
+      @sacrifice_shift_detected = false
+      on_sacrifice_shift
+    end
+
+    current_hp = checkhealth
+    max_hp = maxhealth
+    current_stunned = checkstunned
+    hp_lost = @last_hp ? (@last_hp - current_hp) : 0
+    is_prone = checkprone
+
+    stun_rounds = 0
+    if current_stunned && @stun_duration =~ /(\d+)/
+      stun_rounds = $1.to_i
+    end
+
+    # Emergency Trigger Conditions:
+    # 1. 30 HP lost
+    # 2. Stunned for >= 2 rounds and prone
+    # 3. Stunned for >= 4 rounds
+    # AND character HP is at least 50 less than total
+    is_emergency = ((hp_lost >= 30) || (stun_rounds >= 2 && is_prone) || (stun_rounds >= 4)) && (current_hp <= max_hp - 50)
+
+    if is_emergency && !@was_emergency
+      fput "sacrifice shift"
+      unless @restoration_disabled
+        sleep 0.5
+        fput "symbol transcendence"
+        echo "Emergency Symbol of Transcendence triggered!"
+      end
+    end
+
+    # Check for HP drop notification
+    if hp_lost >= 10
+      message = "HP Dropped by #{hp_lost}! Current HP: #{current_hp}"
+      if @stun_duration != "unknown"
+        message += " for #{@stun_duration}"
+      end
+
+      if is_prone
+        message += " and are PRONE"
+      end
+      message += "!"
+
+      spawn("mpv-unwrapped /etc/profiles/per-user/jeff/share/sounds/elementary/stereo/dialog-information.oga")
+      spawn("notify-send -u critical 'GSIV: #{XMLData.name}' '#{message}'")
+
+      echo message
+    elsif !current_stunned
+      # Reset duration when not stunned
+      @stun_duration = "unknown"
+    end
+
+    # Check for Health Restoration
+    if current_hp < (max_hp * 0.8) && !dead? && !@restoration_disabled
+      did_pause = false
+      if Script.running?("bigshot")
+        Script.pause("bigshot")
+        did_pause = true
+        echo "Health below 80%. Pausing Bigshot for restoration."
+      end
+
+      while checkhealth < (max_hp * 0.8) && !dead? && !@restoration_disabled
+        if @sacrifice_shift_detected
+          @sacrifice_shift_detected = false
+          on_sacrifice_shift
+          break
+        end
+        fputwait "symbol restoration"
+      end
+
+      if did_pause && Script.running?("bigshot")
+        Script.unpause("bigshot")
+        echo "Health restored above 80% or restoration disabled. Resuming Bigshot."
+      end
+      # Update current_hp after restoration loop
+      current_hp = checkhealth
+    end
+
+    # Update state
+    @last_hp = current_hp
+    @last_stunned = current_stunned
+    @was_emergency = is_emergency
+  rescue => e
+    echo "Error in notify-combat: #{e.message}"
+    echo e.backtrace.first
+  end
+
+  sleep 1
+end

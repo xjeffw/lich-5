@@ -1,0 +1,494 @@
+# infusion.lic
+# Infusion helper script for unlocking scroll spells and infusing mana.
+#
+# Usage:
+#   ;infusion unlock <spell_num> [<spell_num> ...]
+#   ;infusion infuse
+#   ;infusion stock <rune_type|count>
+#   ;infusion draw <rune_type>
+#   ;infusion brush
+
+load "#{$script_dir}util.lic"
+
+SCROLL_NOUNS = ["scroll", "paper", "palimpsest", "papyrus", "parchment", "vellum"]
+RUNE_TYPES = ["jade", "hexagonal", "chalcedony"]
+RUNE_TOWNS = { "jade" => "imt", "hexagonal" => "sol", "chalcedony" => "wl" }
+RUNE_ITEM_NUMBERS = { "jade" => 24, "hexagonal" => 14, "chalcedony" => 40 }
+RUNE_NAMES = { "jade" => "quiss'fyn", "hexagonal" => "odeir'cos", "chalcedony" => "ag'loenar" }
+TOWN_ROOMS = { "imt" => "imt", "wl" => "sp", "sol" => "sol" }
+
+def resolve_rune_type(input)
+  return nil if input.nil?
+  input = input.downcase
+  RUNE_TYPES.find { |type| type.start_with?(input) }
+end
+
+def find_scroll
+  left = GameObj.left_hand
+  right = GameObj.right_hand
+
+  left_is_scroll = left && left.noun && SCROLL_NOUNS.include?(left.noun.downcase)
+  right_is_scroll = right && right.noun && SCROLL_NOUNS.include?(right.noun.downcase)
+
+  left_is_empty = left.nil? || left.name == "Empty" || left.name.empty?
+  right_is_empty = right.nil? || right.name == "Empty" || right.name.empty?
+
+  if left_is_scroll && right_is_empty
+    return left
+  elsif right_is_scroll && left_is_empty
+    return right
+  else
+    echo "Error: You must have one scroll in one hand and the other hand empty."
+    exit
+  end
+end
+
+def infuse
+  scroll = find_scroll
+  scroll_noun = scroll.noun
+
+  if scroll.id == GameObj.right_hand.id
+    dothistimeout "swap", 3, /^You swap/
+  end
+
+  # Ensure other hand is clear
+  if GameObj.right_hand.id
+    if GameObj.right_hand.noun == "runestone"
+      dothistimeout "put my runestone in my dark bag", 3, /^You put/
+    else
+      dothistimeout "stow right", 3, /^You put|^Stow what|^You are not holding/
+    end
+  end
+
+  res = dothistimeout "get chalcedony rune from my dark bag", 3, /^You (?:get|remove)|^Get what\?|^You already/
+  if res =~ /^Get what\?/
+    echo "Error: Out of chalcedony runes!"
+    exit
+  end
+
+  dothistimeout "prep 714", 3, /^You begin|^Your spell is ready/
+  dothistimeout "cast my #{scroll_noun}", 3, /^You gesture|^You focus/
+
+  loop {
+    if checkmana < 25
+      echo "Waiting for mana..."
+      while checkmana < 25
+        sleep 1
+      end
+    end
+
+    if [GameObj.right_hand, GameObj.left_hand].none? { |obj| obj.noun == "runestone" }
+      res = dothistimeout "get chalcedony rune from my dark bag", 3, /^You (?:get|remove)|^Get what\?|^You already/
+      if res =~ /^Get what\?/
+        echo "Error: Out of chalcedony runes!"
+        exit
+      end
+    end
+
+    res = dothistimeout "infuse my #{scroll_noun}", 3, /an infusion of mana leaps|The mana dissipates/
+    break if res =~ /The mana dissipates/
+    waitrt?
+  }
+
+  dothistimeout "put my runestone in my dark bag", 3, /^You put/
+  res = dothistimeout "get hexagonal runestone from my dark bag", 3, /^You (?:get|remove)|^Get what\?/
+  if res =~ /^Get what\?/
+    echo "Error: Out of hexagonal runestones!"
+    exit
+  end
+  dothistimeout "wave my runestone at my #{scroll_noun}", 3, /^You wave/
+  dothistimeout "put my runestone in my dark bag", 3, /^You put/
+end
+
+def unlock(spell_nums)
+  # Ensure spell_nums is an array of strings for matching
+  spell_nums = [spell_nums].flatten.map(&:to_s)
+
+  scroll = find_scroll
+  scroll_noun = scroll.noun
+  Script.current.want_downstream_xml = true
+
+  loop {
+    clear
+    res = dothistimeout "get hex runestone from my dark bag", 3, /^You (?:get|remove)|^Get what\?|^You already/
+    if res =~ /^Get what\?/
+      echo "Error: Out of hex runestones!"
+      exit
+    end
+    fput "wave my runestone at my #{scroll_noun}"
+
+    found_spells = []
+    locked_spells = []
+
+    # Scan the output for the spell numbers
+    while (line = get)
+      if line =~ /^\s+\((\d+)\) .* with (.*)$/
+        s_num = $1
+        s_status = $2
+        if spell_nums.include?(s_num)
+          found_spells << s_num
+          if s_status !~ /and the potential to add/
+            locked_spells << s_num
+          end
+        end
+      elsif line =~ /Cast Round/
+        break
+      else
+        sleep 0.1
+      end
+    end
+
+    waitcastrt?
+    sleep 0.2
+
+    # Check if any requested spells were missing
+    missing = spell_nums - found_spells
+    if !missing.empty?
+      echo "Error: Spell(s) #{missing.uniq.join(", ")} not found on the #{scroll_noun}."
+      fput "put my hex runestone in my dark bag"
+      exit
+    end
+
+    if locked_spells.empty?
+      echo "Success: All instances of spell(s) #{spell_nums.uniq.join(", ")} are unlocked!"
+      # Assuming we should put the runestone away before exiting
+      fput "put my hex runestone in my dark bag"
+      waitfor "<prompt"
+      return
+    else
+      echo "Spell(s) #{locked_spells.uniq.join(", ")} still locked. Using jade runestone..."
+      fput "put my hex runestone in my dark bag"
+      waitfor "<prompt"
+      res = dothistimeout "get jade runestone from my dark bag", 3, /^You (?:get|remove)|^Get what\?|^You already/
+      if res =~ /^Get what\?/
+        echo "Error: Out of jade runestones!"
+        exit
+      end
+      fput "wave my runestone at my #{scroll_noun}"
+      waitcastrt?
+      sleep 0.2
+      fput "put my jade runestone in my dark bag"
+      waitfor "<prompt"
+      # Loop continues to wave the hex runestone again
+    end
+  }
+end
+
+def count_runes(container_name)
+  sorter_stopped = stop_sorter
+  counts = {}
+  RUNE_TYPES.each { |type| counts[type] = 0 }
+  was_xml = Script.current.want_downstream_xml
+  Script.current.want_downstream_xml = true
+
+  begin
+    res = dothistimeout "look in my #{container_name}", 3, /^In the|^I could not find|^That is closed/
+    if res.nil? || res =~ /^I could not find|^That is closed/
+      return counts
+    end
+
+    full_text = res + " "
+    while (line = get)
+      break if line =~ /<prompt/
+      full_text << line.gsub(/<[^>]+>/, "").strip
+      full_text << " "
+    end
+
+    RUNE_TYPES.each do |rune_type|
+      type_pattern = Regexp.escape(rune_type)
+      # Split by commas, "and", or colons (for structured view categories)
+      parts = full_text.split(/,|\band\b|:/)
+      parts.each do |part|
+        if part =~ /\b#{type_pattern}\b/i && part =~ /\brunestones?\b/i
+          if part =~ /\((\d+)\)/
+            counts[rune_type] += $1.to_i
+          elsif part =~ /\b(\d+)\s+.*?\b#{type_pattern}/i
+            counts[rune_type] += $1.to_i
+          else
+            counts[rune_type] += 1
+          end
+        end
+      end
+    end
+  ensure
+    Script.current.want_downstream_xml = was_xml
+    Script.start("sorter") if sorter_stopped
+  end
+
+  counts
+end
+
+def count_runes_summary
+  rune_counts = count_runes("dark bag")
+  supply_counts = count_supplies("dark bag")
+  respond "Rune counts:"
+  RUNE_TYPES.each do |type|
+    respond "  #{type}: #{rune_counts[type]}"
+  end
+  respond "Supply counts:"
+  respond "  ink: #{supply_counts["ink"]}"
+  respond "  cup: #{supply_counts["cup"]}"
+end
+
+def count_supplies(container_name)
+  sorter_stopped = stop_sorter
+  counts = { "cup" => 0, "ink" => 0 }
+  was_xml = Script.current.want_downstream_xml
+  Script.current.want_downstream_xml = true
+
+  begin
+    res = dothistimeout "look in my #{container_name}", 3, /^In the|^I could not find|^That is closed/
+    if res.nil? || res =~ /^I could not find|^That is closed/
+      return counts
+    end
+
+    full_text = res + " "
+    while (line = get)
+      break if line =~ /<prompt/
+      full_text << line.gsub(/<[^>]+>/, "").strip
+      full_text << " "
+    end
+
+    parts = full_text.split(/,|\band\b|:/)
+    parts.each do |part|
+      part = part.strip.downcase
+      if part =~ /\bcup\b/
+        if part =~ /\((\d+)\)/
+          counts["cup"] += $1.to_i
+        elsif part =~ /\b(\d+)\s+.*?\bcup/
+          counts["cup"] += $1.to_i
+        else
+          counts["cup"] += 1
+        end
+      elsif part =~ /\bink\b/
+        if part =~ /\((\d+)\)/
+          counts["ink"] += $1.to_i
+        elsif part =~ /\b(\d+)\s+.*?\bink/
+          counts["ink"] += $1.to_i
+        else
+          counts["ink"] += 1
+        end
+      end
+    end
+  ensure
+    Script.current.want_downstream_xml = was_xml
+    Script.start("sorter") if sorter_stopped
+  end
+
+  counts
+end
+
+def stock_supplies
+  unless have_container?("dark bag")
+    echo "Error: Could not find dark bag!"
+    return
+  end
+
+  counts = count_supplies("dark bag")
+  need_cup = [4 - counts["cup"], 0].max
+  need_ink = [4 - counts["ink"], 0].max
+
+  if need_cup == 0 && need_ink == 0
+    echo "Supplies already at target levels (cups: #{counts["cup"]}, ink: #{counts["ink"]})."
+    return
+  end
+
+  echo "Stocking supplies: need #{need_cup} cup(s) and #{need_ink} ink(s)."
+
+  Script.run("warp2", "sp")
+  Script.run("go2", "bank")
+  stowed_ids = stow_items
+  before_dying { restore_items(stowed_ids) }
+  fputwait "withdraw 50000"
+  Script.run("go2", "alchemist")
+
+  if need_ink > 0
+    fputwait "order #{need_ink} of 36"
+    fputwait "buy"
+    fputwait "open my package"
+    fputwait "empty my package into my dark bag"
+    fputwait "drop package"
+  end
+
+  if need_cup > 0
+    fputwait "order #{need_cup} of 37"
+    fputwait "buy"
+    fputwait "open my package"
+    fputwait "empty my package into my dark bag"
+    fputwait "drop package"
+  end
+end
+
+def stock(rune_type)
+  if rune_type.to_s.downcase == "count"
+    count_runes_summary
+    return
+  elsif "supplies".start_with?(rune_type.to_s.downcase)
+    stock_supplies
+    return
+  end
+
+  rune_key = resolve_rune_type(rune_type)
+  unless rune_key
+    echo "Error: Unknown rune type: #{rune_type}. Known types: #{RUNE_TYPES.join(", ")}"
+    return
+  end
+
+  town = RUNE_TOWNS[rune_key]
+
+  town_room = TOWN_ROOMS[town]
+  unless town_room
+    echo "Error: Missing town room mapping for #{town}."
+    return
+  end
+
+  Script.run("go2", town_room.to_s)
+  Script.run("go2", "bank")
+  stowed_ids = stow_items
+  before_dying { restore_items(stowed_ids) }
+  fputwait "withdraw 50000"
+  Script.run("go2", "alchemist")
+
+  counts = count_runes("dark bag")
+  rune_count = counts[rune_key] || 0
+  need_runes = 6 - rune_count
+  item_number = RUNE_ITEM_NUMBERS[rune_key]
+  unless item_number
+    echo "Error: Missing rune item number mapping for #{rune_key}."
+    return
+  end
+
+  if need_runes > 0
+    fputwait "order #{need_runes} of #{item_number}"
+    fputwait "buy"
+    if [GameObj.right_hand, GameObj.left_hand].any? { |obj| obj.noun == "package" }
+      fputwait "open my package"
+      fputwait "empty my package into my other pack"
+      fputwait "drop package"
+    elsif [GameObj.right_hand, GameObj.left_hand].any? { |obj| obj.noun == "runestone" }
+      fputwait "put my runestone in my pack"
+    end
+  else
+    echo "No runes needed for #{rune_key} (have #{rune_count})."
+  end
+end
+
+def draw(rune_type)
+  rune_key = resolve_rune_type(rune_type)
+  unless rune_key
+    echo "Error: Unknown rune type: #{rune_type}. Known types: #{RUNE_TYPES.join(", ")}"
+    return
+  end
+
+  rune_name = RUNE_NAMES[rune_key]
+
+  stowed_ids = stow_items
+  before_dying { restore_items(stowed_ids) }
+
+  rune_count = count_runes("pack")[rune_key] || 0
+  if rune_count <= 0
+    echo "No #{rune_key} runes found in your pack."
+    return
+  end
+
+  rune_count.times do
+    brush
+    fput "get #{rune_key} rune from my pack"
+    fput "draw #{rune_name} rune on my runestone with my brush"
+    sleep 0.2
+    waitrt?
+    sleep 0.5
+    fput "put my runestone in my dark bag"
+    sleep 0.2
+    fput "put my brush in my dark bag"
+    sleep 0.2
+  end
+end
+
+def brush
+  fput "get brush from my dark bag"
+  sleep 0.2
+  fput "look my brush"
+  sleep 0.2
+  status = nil
+
+  while (line = get)
+    if line =~ /\b(rich|dried|dry|smooth)\b/
+      status = $1.downcase
+      break
+    end
+  end
+
+  unless status
+    echo "Error: Could not determine brush status."
+    return
+  end
+
+  if status == "rich"
+    return
+  end
+
+  if status == "dried" || status == "dry"
+    fput "get cup from my dark bag"
+    sleep 0.1
+    fput "dip brush in my cup"
+    sleep 0.1
+    fput "put cup in my dark bag"
+    sleep 0.1
+  end
+
+  fput "get ink from my dark bag"
+  sleep 0.1
+  fput "dip brush in my ink"
+  sleep 0.1
+  fput "put ink in my dark bag"
+  sleep 0.1
+end
+
+def print_infusion_usage
+  wrap_mono <<~USAGE
+    Usage:
+      ;infusion unlock spell_num [spell_num ...]
+      ;infusion infuse
+      ;infusion stock rune_type|count|supplies
+      ;infusion draw rune_type
+      ;infusion brush
+
+    unlock: repeatedly uses jade runestones until specified spells are unlocked.
+    infuse: link with scroll and repeatedly infuse until full, using chalcedony.
+    stock: travel, withdraw silver, and move to the alchemist.
+    stock count: count runes and supplies in your dark bag.
+    stock supplies: restock ink and cups in your dark bag.
+    draw: draw rune names on your runestone using runes in your pack.
+    brush: prepare the brush based on its current status.
+  USAGE
+end
+
+if Script.current.vars[1].nil?
+  print_infusion_usage
+  exit
+elsif Script.current.vars[1].downcase == "unlock"
+  if Script.current.vars[2].nil?
+    echo "Error: Please specify one or more spell numbers."
+  else
+    unlock(Script.current.vars[2..-1])
+  end
+elsif Script.current.vars[1].downcase == "infuse"
+  infuse
+elsif Script.current.vars[1].downcase == "stock"
+  if Script.current.vars[2].nil?
+    echo "Error: Please specify a rune type, 'count', or 'supplies'."
+  else
+    stock(Script.current.vars[2])
+  end
+elsif Script.current.vars[1].downcase == "draw"
+  if Script.current.vars[2].nil?
+    echo "Error: Please specify a rune type."
+  else
+    draw(Script.current.vars[2])
+  end
+elsif Script.current.vars[1].downcase == "brush"
+  brush
+else
+  print_infusion_usage
+end

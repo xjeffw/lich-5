@@ -1,0 +1,49 @@
+=begin
+  loresing.lic
+  
+  Automates loresinging to an item in the right hand.
+  Loops through a list of words until the item's loresong is permanently unlocked.
+  
+  Usage: ;loresing
+=end
+
+words = ["value", "purpose", "abilities", "magics", "defenses", "enhancives"]
+item = GameObj.right_hand
+
+if item.id.nil?
+  echo "Error: Right hand is empty. Please hold the item you wish to sing to."
+  exit
+end
+
+echo "Singing to #{item.name}..."
+
+loop do
+  words.each do |word|
+    waitrt?
+    waitcastrt?
+    
+    cmd = "loresing #{item.name}, be you well;what #{word} will you tell?"
+    
+    # We wait for one of three outcomes:
+    # 1. Unlock message (Success - exit script)
+    # 2. Roundtime (Verse successful, move to next)
+    # 3. End of song (Verse failed/no info, move to next)
+    
+    result = dothistimeout(
+      cmd, 
+      5, 
+      /Its loresong has been permanently unlocked by you\.|Roundtime:|You feel that you have reached the end of the .* song\.|You feel as though you have reached/
+    )
+    
+    if result =~ /Its loresong has been permanently unlocked by you\./
+      echo "Success! #{item.name} has been permanently unlocked."
+      waitrt?
+      fput "recall #{item.noun}"
+      exit
+    elsif result.nil?
+      echo "Warning: No expected response received. Retrying or moving on..."
+    end
+    
+    # Implicitly continues to next word
+  end
+end

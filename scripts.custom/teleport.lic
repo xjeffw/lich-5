@@ -1,0 +1,164 @@
+=begin
+  teleport.lic: Manages teleportation book entries.
+  Hides the raw book output and parses it into a clean list of destinations.
+
+  author: Gemini
+  game: Gemstone
+  tags: travel, teleport
+  version: 1.0.0
+=end
+
+# Load utility functions
+load "#{$script_dir}util.lic"
+
+# Check if book is already in left hand and swap it immediately if so
+if checkleft == "book"
+  dothistimeout "swap", 3, /^You swap/
+  sleep 0.1
+end
+
+def get_book_entries
+  Script.current.want_downstream_xml = true
+
+  # Check if book is already in hands
+  book = [GameObj.right_hand, GameObj.left_hand].find { |obj| obj.noun == "book" }
+
+  unless book
+    dothistimeout "stow right", 3, /^You put|^Stow what|^You are not holding/
+    dothistimeout "stow left", 3, /^You put|^Stow what|^You are not holding/
+    res = dothistimeout "get book from my pack", 3, /^You remove|^Get what/
+    if res =~ /^Get what/
+      echo "Error: Could not find your teleport book in your pack."
+      return {}
+    end
+    sleep 0.1
+    book = [GameObj.right_hand, GameObj.left_hand].find { |obj| obj.noun == "book" }
+  end
+
+  unless book
+    echo "Error: Could not find your teleport book in your hands."
+    return {}
+  end
+
+  # Move to right hand if in left
+  if GameObj.left_hand.id == book.id
+    dothistimeout "swap", 3, /^You swap/
+  end
+
+  entries = {}
+  last_line_captured = 0
+  hook_name = "teleport_book_parse"
+
+  # Hook to capture and suppress the book listing
+  capture_action = proc { |line|
+    # Strip XML tags for cleaner parsing
+    stripped = line.gsub(/<.*?>/, "").strip
+
+    if stripped =~ /^(\d+)\.\s+(.*)\[(.*)\]/
+      num = $1.to_i
+      room = $3.strip
+      entries[num] = room
+      last_line_captured = num
+      nil # Suppress from client
+    elsif stripped =~ /^(\d+)\.\s*$/
+      num = $1.to_i
+      last_line_captured = num
+      nil # Suppress empty slots
+    else
+      line
+    end
+  }
+
+  begin
+    DownstreamHook.add(hook_name, capture_action)
+    fput "read my book"
+
+    # Wait for the full list (usually 20 lines) or a timeout
+    timeout = Time.now + 3
+    wait_until { last_line_captured >= 20 || Time.now > timeout }
+    sleep 0.1
+  ensure
+    DownstreamHook.remove(hook_name)
+  end
+
+  entries
+end
+
+def list_destinations
+  entries = get_book_entries
+  if entries.empty?
+    echo "No destinations found in your teleport book."
+  else
+    respond "Teleport Destinations:"
+    entries.keys.sort.each do |num|
+      respond "  #{num}. [#{entries[num]}]"
+    end
+    respond ""
+    respond "Run ';teleport <number>' to open rift."
+  end
+end
+
+def teleport(num, do_warp = false)
+  if checkmana < 40
+    echo "Error: Not enough mana to teleport (need 40)."
+    return
+  end
+
+  entries = get_book_entries
+  room_name = entries[num.to_i]
+
+  if room_name.nil?
+    echo "Error: Destination ##{num} not found in book."
+    return
+  end
+
+  # Chalk management
+  if GameObj.left_hand.noun != "chalk"
+    if GameObj.left_hand.id
+      dothistimeout "stow left", 3, /^You put|^Stow what|^You are not holding/
+    end
+    dothistimeout "get my translucent chalk", 3, /^You remove/
+  end
+
+  dothistimeout "draw summoning circle", 5, /^Using some .* chalk, you outline/
+  dothistimeout "draw pattern #{num}", 5, /^You study your leather book/
+  dothistimeout "prep 740", 3, /^Your spell is ready/
+  res = dothistimeout "cast circle", 5, /^Your spell activates the dormant summoning circle|Suddenly, a dark cloud emerges from the rift/
+
+  if res =~ /Suddenly, a dark cloud emerges from the rift/
+    echo "Teleportation failed: A dark cloud emerged from the rift!"
+    return
+  end
+
+  respond ""
+  respond "Rift to [#{room_name}] is open!"
+
+  if do_warp
+    fput "stow hands"
+    fput "gird"
+    fput "go rift"
+  end
+end
+
+def print_teleport_usage
+  wrap_mono <<~USAGE
+              Usage:
+                ;teleport                 - List destinations
+                ;teleport <number>        - Teleport to destination
+                ;teleport <number> warp   - Teleport and go through rift
+            USAGE
+end
+
+if defined?(script) && script.name.casecmp("teleport") == 0
+  if script.vars.include?("help")
+    print_teleport_usage
+    exit
+  elsif script.vars[1].nil?
+    list_destinations
+  elsif script.vars[1] =~ /^\d+$/
+    do_warp = script.vars[2] && "warp".start_with?(script.vars[2].downcase)
+    teleport(script.vars[1], do_warp)
+  else
+    print_teleport_usage
+  end
+end

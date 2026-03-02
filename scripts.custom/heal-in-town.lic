@@ -1,0 +1,29 @@
+=begin
+  Stores initial room number, performs a specific movement sequence,
+  runs the eherbs script, and returns to the starting room.
+
+        author: Gemini
+          game: Gemstone
+          tags: utility, healing
+       version: 1.0.0
+=end
+
+if Room.current.id.nil?
+  echo "You are in an unmapped room. Cannot return here."
+  exit
+end
+
+initial_room = Room.current.id
+echo "Starting room: #{initial_room}"
+
+fput "go path"
+move "north"
+move "northwest"
+move "west"
+move "south"
+
+echo "Running eherbs..."
+Script.run("eherbs")
+
+echo "Returning to room: #{initial_room}"
+Script.run("go2", initial_room.to_s)

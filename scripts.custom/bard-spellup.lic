@@ -1,0 +1,8 @@
+# bard-spellup.lic
+load "#{$script_dir}util.lic"
+
+fputwait "remove my chain"
+fputwait "inc 425"
+fputwait "inc 430"
+fputwait "wear my chain"
+fputwait "sort auto head"

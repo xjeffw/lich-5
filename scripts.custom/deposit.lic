@@ -1,0 +1,50 @@
+=begin
+  Stores initial room number, runs ";go2 bank", "deposit all", "withdraw 100", and optionally returns or goes to a destination.
+
+  Usage: ;deposit [return|<destination>]
+
+        author: Gemini
+          game: Gemstone
+          tags: utility, bank
+       version: 1.2.0
+=end
+
+def print_usage
+  wrap_mono <<~USAGE
+    Usage:
+      ;deposit [return|<destination>]
+
+    Deposits all silvers at the bank, withdraws 100, and optionally:
+      - returns to the starting room if "return" is specified.
+      - goes to <destination> (room ID or tag) if specified.
+  USAGE
+end
+
+if script.vars.include?("help")
+  print_usage
+  exit
+end
+
+arg = script.vars[1]
+should_return = (arg == 'return')
+destination = (arg && !should_return) ? arg : nil
+
+if should_return && Room.current.id.nil?
+  echo "You are in an unmapped room. Cannot return here."
+  exit
+end
+
+starting_room = Room.current.id
+echo "Starting room: #{starting_room}" if should_return
+
+Script.run('go2', 'bank')
+fput 'deposit all'
+fput 'withdraw 100'
+
+if should_return
+  echo "Returning to room: #{starting_room}"
+  Script.run('go2', starting_room.to_s)
+elsif destination
+  echo "Going to destination: #{destination}"
+  Script.run('go2', destination)
+end

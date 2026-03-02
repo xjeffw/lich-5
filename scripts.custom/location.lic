@@ -1,0 +1,24 @@
+=begin
+  location.lic: Prints the location field of the current room.
+
+  author: Gemini
+  game: Gemstone
+  tags: utility, location
+  version: 1.0.0
+=end
+
+# Load utility functions
+util_path = File.join(LICH_DIR, "scripts.custom", "util.lic")
+if File.exist?(util_path)
+  load util_path
+else
+  echo "Error: Could not find #{util_path}. Please ensure scripts.custom/util.lic exists."
+  exit
+end
+
+if Room.current && Room.current.location
+  echo "Current location: #{Room.current.location}"
+  echo "Resolved location: #{resolve_location(Room.current.location)}"
+else
+  echo "Current location unknown or unmapped."
+end
