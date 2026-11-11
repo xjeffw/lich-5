@@ -714,7 +714,7 @@ end
 def print_infusion_usage
   wrap_mono <<~USAGE
               Usage:
-                ;infusion inventory <sub-command>
+                ;infusion inventory list|auto
                 ;infusion unlock spell_num [spell_num ...]
                 ;infusion infuse
                 ;infusion stock rune_type|count|supplies

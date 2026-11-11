@@ -94,7 +94,7 @@ def list_destinations
       respond "  #{num}. [#{entries[num]}]"
     end
     respond ""
-    respond "Run ';teleport <number>' to open rift."
+    respond "Run ';teleport number' to open rift."
   end
 end
 
