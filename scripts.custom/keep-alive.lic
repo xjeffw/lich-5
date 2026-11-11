@@ -1,0 +1,15 @@
+=begin
+  Sends "look" every 30 seconds to keep the connection alive.
+
+  tags: utility, afk
+  version: 1.0.0
+=end
+
+INTERVAL = 30
+
+echo "keep-alive started: sending 'look' every #{INTERVAL} seconds"
+
+loop do
+  sleep INTERVAL
+  put "look"
+end
