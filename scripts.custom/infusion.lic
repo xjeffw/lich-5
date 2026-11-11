@@ -9,6 +9,7 @@
 #   ;infusion brush
 
 load "#{$script_dir}util.lic"
+load "#{$script_dir}read-scrolls.lic"
 
 SCROLL_NOUNS = ["scroll", "paper", "palimpsest", "papyrus", "parchment", "vellum"]
 RUNE_TYPES = ["jade", "hexagonal", "chalcedony"]
@@ -60,9 +61,9 @@ def infuse
     end
   end
 
-  res = dothistimeout "get chalcedony rune from my dark bag", 3, /^You (?:get|remove)|^Get what\?|^You already/
-  if res =~ /^Get what\?/
-    echo "Error: Out of chalcedony runes!"
+  res = dothistimeout "get my chalcedony runestone from my dark bag", 3, /^You (?:get|remove)|^Get what\?|^You already/
+  if [GameObj.right_hand, GameObj.left_hand].none? { |obj| obj.name =~ /chalcedony runestone/i }
+    echo "Error: Out of chalcedony runestones!"
     exit
   end
 
@@ -77,10 +78,10 @@ def infuse
       end
     end
 
-    if [GameObj.right_hand, GameObj.left_hand].none? { |obj| obj.noun == "runestone" }
-      res = dothistimeout "get chalcedony rune from my dark bag", 3, /^You (?:get|remove)|^Get what\?|^You already/
-      if res =~ /^Get what\?/
-        echo "Error: Out of chalcedony runes!"
+    if [GameObj.right_hand, GameObj.left_hand].none? { |obj| obj.name =~ /chalcedony runestone/i }
+      dothistimeout "get my chalcedony runestone from my dark bag", 3, /^You (?:get|remove)|^Get what\?|^You already/
+      if [GameObj.right_hand, GameObj.left_hand].none? { |obj| obj.name =~ /chalcedony runestone/i }
+        echo "Error: No chalcedony runestone in hand and could not get one!"
         exit
       end
     end
@@ -299,7 +300,7 @@ def stock_supplies
   Script.run("go2", "bank")
   stowed_ids = stow_items
   before_dying { restore_items(stowed_ids) }
-  fputwait "withdraw 50000"
+  fputwait "withdraw 60000"
   Script.run("go2", "alchemist")
 
   if need_ink > 0
@@ -346,7 +347,7 @@ def stock(rune_type)
   Script.run("go2", "bank")
   stowed_ids = stow_items
   before_dying { restore_items(stowed_ids) }
-  fputwait "withdraw 50000"
+  fputwait "withdraw 60000"
   Script.run("go2", "alchemist")
 
   counts = count_runes("dark bag")
@@ -445,28 +446,297 @@ def brush
   sleep 0.1
 end
 
+def inventory_list
+  target_container_names = ["case", "harness", "backpack"]
+  results_by_container = {}
+  scroll_nouns = SCROLL_NOUNS
+
+  # Search in worn inventory and hands
+  all_items = GameObj.inv + [GameObj.left_hand, GameObj.right_hand]
+
+  target_container_names.each do |c_name|
+    container = all_items.find { |obj| obj && obj.name =~ /\b#{c_name}\b/i }
+    next unless container
+
+    # Ensure container is open and contents are loaded
+    fput "look in ##{container.id}"
+    res = waitfor "In the ", "On the ", "There is nothing", "That is closed", "I could not find"
+    if res =~ /closed/i
+      fput "open ##{container.id}"
+      fput "look in ##{container.id}"
+      waitfor "In the ", "On the ", "There is nothing"
+    end
+
+    scrolls = container.contents.select { |obj| obj && obj.noun && scroll_nouns.include?(obj.noun.downcase) }
+    next if scrolls.empty?
+
+    results_by_container[container.name] = []
+
+    scrolls.each do |scroll|
+      spells = []
+      hook_name = "infusion_inv_#{scroll.id}_#{Time.now.to_i}"
+      was_xml = Script.current.want_downstream_xml
+      Script.current.want_downstream_xml = true
+
+      DownstreamHook.add(hook_name, proc { |line|
+        stripped = line.gsub(/<.*?>/, "")
+        # Reuse parsing logic from read-scrolls.lic
+        unless stripped =~ /vibrant/i
+          if stripped =~ /^\s+\((\d+)\) (.*)$/
+            spells << "(#{$1}) #{$2.strip}"
+          end
+        end
+        line
+      })
+
+      waitrt?
+      fput "read ##{scroll.id}"
+      waitfor "<prompt"
+      DownstreamHook.remove(hook_name)
+      Script.current.want_downstream_xml = was_xml
+
+      results_by_container[container.name] << { name: scroll.name, id: scroll.id, spells: spells }
+    end
+  end
+
+  if results_by_container.empty?
+    respond "No scrolls found in case, harness, or backpack."
+  else
+    respond "Scroll Inventory:"
+    results_by_container.each do |c_name, scrolls|
+      respond "  #{c_name}:"
+      scrolls.each do |r|
+        spell_str = r[:spells].join(", ")
+        respond "    #{r[:name]} (##{r[:id]}): #{spell_str}"
+      end
+    end
+  end
+end
+
+def get_all_scrolls
+  target_container_names = ["case", "harness", "backpack"]
+  all_scrolls = []
+  scroll_nouns = SCROLL_NOUNS
+
+  # Search in worn inventory and hands
+  all_items = GameObj.inv + [GameObj.left_hand, GameObj.right_hand]
+
+  target_container_names.each do |c_name|
+    container = all_items.find { |obj| obj && obj.name =~ /\b#{c_name}\b/i }
+    next unless container
+
+    # Ensure container is open and contents are loaded
+    fput "look in ##{container.id}"
+    res = waitfor "In the ", "On the ", "There is nothing", "That is closed", "I could not find"
+    if res =~ /closed/i
+      fput "open ##{container.id}"
+      fput "look in ##{container.id}"
+      waitfor "In the ", "On the ", "There is nothing"
+    end
+
+    scrolls = container.contents.select { |obj| obj && obj.noun && scroll_nouns.include?(obj.noun.downcase) }
+    next if scrolls.empty?
+
+    scrolls.each do |scroll|
+      spell_info = {}
+      hook_name = "infusion_inv_#{scroll.id}_#{Time.now.to_i}"
+      was_xml = Script.current.want_downstream_xml
+      Script.current.want_downstream_xml = true
+
+      DownstreamHook.add(hook_name, proc { |line|
+        stripped = line.gsub(/<.*?>/, "")
+        unless stripped =~ /vibrant/i
+          if stripped =~ /^\s+\((\d+)\) (.*)$/
+            spell_num = $1.to_i
+            spell_name = $2.strip
+            if spell_info[spell_num]
+              spell_info[spell_num][:count] += 1
+            else
+              spell_info[spell_num] = { name: spell_name, count: 1 }
+            end
+          end
+        end
+        line
+      })
+
+      waitrt?
+      fput "read ##{scroll.id}"
+      waitfor "<prompt"
+      DownstreamHook.remove(hook_name)
+      Script.current.want_downstream_xml = was_xml
+
+      all_scrolls << { name: scroll.name, id: scroll.id, spells: spell_info, current_container: c_name }
+    end
+  end
+  all_scrolls
+end
+
+def inventory_auto
+  all_scrolls = get_all_scrolls
+  if all_scrolls.empty?
+    respond "No scrolls found to redistribute."
+    return
+  end
+
+  desired_spells = ReadScrolls::DESIRED_SPELLS
+  spell_values = ReadScrolls::SPELLS
+
+  waiting = all_scrolls.dup
+  assignments = { "case" => [], "harness" => [], "backpack" => [] }
+  limits = { "case" => 20, "harness" => 30 }
+  current_spells = { "case" => Hash.new(0), "harness" => Hash.new(0) }
+
+  # Balanced distribution loop
+  while (assignments["case"].length < limits["case"] || assignments["harness"].length < limits["harness"]) && !waiting.empty?
+    potential_assignments = []
+
+    waiting.each do |scroll|
+      ["case", "harness"].each do |c_name|
+        next if assignments[c_name].length >= limits[c_name]
+
+        desired_on_scroll = scroll[:spells].keys.select { |s| desired_spells.include?(s) }
+
+        if desired_on_scroll.empty?
+          tier = 999
+          count_at_tier = 0
+        else
+          tier = desired_on_scroll.map { |s| current_spells[c_name][s] }.min + 1
+          count_at_tier = desired_on_scroll.count { |s| current_spells[c_name][s] == tier - 1 }
+        end
+
+        scroll_score = 0
+        scroll[:spells].each do |num, info|
+          scroll_score += (spell_values[num] || 0) * info[:count] if desired_spells.include?(num)
+        end
+
+        potential_assignments << {
+          scroll: scroll,
+          container: c_name,
+          tier: tier,
+          count: count_at_tier,
+          score: scroll_score,
+        }
+      end
+    end
+
+    break if potential_assignments.empty?
+
+    # Sort by tier ASC, count DESC, score DESC
+    best = potential_assignments.sort_by { |pa| [pa[:tier], -pa[:count], -pa[:score], pa[:container]] }.first
+
+    best_scroll = best[:scroll]
+    c_name = best[:container]
+
+    best_scroll[:intended_container] = c_name
+    assignments[c_name] << best_scroll
+    waiting.delete(best_scroll)
+
+    # Update current spells counts
+    best_scroll[:spells].each do |num, info|
+      current_spells[c_name][num] += info[:count] if desired_spells.include?(num)
+    end
+  end
+
+  assignments["backpack"] = waiting
+  waiting.each { |s| s[:intended_container] = "backpack" }
+
+  respond "Scroll Redistribution Plan:"
+  ["case", "harness", "backpack"].each do |c_name|
+    respond "  #{c_name} (#{assignments[c_name].length}):"
+    assignments[c_name].each do |s|
+      spell_str = s[:spells].map { |num, info| "(#{num}) #{info[:name]}" }.join(", ")
+      respond "    #{s[:name]} (##{s[:id]}): #{spell_str}"
+    end
+  end
+
+  # Find container objects for IDs
+  all_items = GameObj.inv + [GameObj.left_hand, GameObj.right_hand]
+  container_objs = {}
+  ["case", "harness", "backpack"].each do |name|
+    container_objs[name] = all_items.find { |obj| obj && obj.name =~ /\b#{name}\b/i }
+  end
+
+  unless container_objs["backpack"]
+    echo "Error: Could not find backpack to move items into."
+    return
+  end
+
+  # Step 1: Move scrolls from case/harness to backpack if they belong elsewhere
+  echo "Consolidating misplaced scrolls in backpack..."
+  all_scrolls.each do |s|
+    if ["case", "harness"].include?(s[:current_container]) && s[:current_container] != s[:intended_container]
+      waitrt?
+      fput "get ##{s[:id]}"
+      fput "put ##{s[:id]} in ##{container_objs["backpack"].id}"
+    end
+  end
+
+  # Step 2: Move intended scrolls to case/harness if they aren't already there
+  ["case", "harness"].each do |c_name|
+    next if assignments[c_name].empty?
+    echo "Filling #{c_name}..."
+    unless container_objs[c_name]
+      echo "Error: Could not find #{c_name} to move items into."
+      next
+    end
+    assignments[c_name].each do |s|
+      if s[:current_container] != c_name
+        waitrt?
+        fput "get ##{s[:id]}"
+        fput "put ##{s[:id]} in ##{container_objs[c_name].id}"
+      end
+    end
+  end
+
+  echo "Redistribution complete."
+end
+
+def inventory
+  sub_command = Script.current.vars[2]
+  if sub_command.nil?
+    wrap_mono <<~USAGE
+                Usage:
+                  ;infusion inventory list
+                  ;infusion inventory auto
+
+                list: list scrolls in your case, harness, and backpack with spells and IDs.
+                auto: calculate redistribution of scrolls to case (20) and harness (30).
+              USAGE
+  elsif "list".start_with?(sub_command.downcase)
+    inventory_list
+  elsif "auto".start_with?(sub_command.downcase)
+    inventory_auto
+  else
+    echo "Error: Unknown inventory sub-command: #{sub_command}. Use ';infusion inventory' for help."
+  end
+end
+
 def print_infusion_usage
   wrap_mono <<~USAGE
-    Usage:
-      ;infusion unlock spell_num [spell_num ...]
-      ;infusion infuse
-      ;infusion stock rune_type|count|supplies
-      ;infusion draw rune_type
-      ;infusion brush
+              Usage:
+                ;infusion inventory <sub-command>
+                ;infusion unlock spell_num [spell_num ...]
+                ;infusion infuse
+                ;infusion stock rune_type|count|supplies
+                ;infusion draw rune_type
+                ;infusion brush
 
-    unlock: repeatedly uses jade runestones until specified spells are unlocked.
-    infuse: link with scroll and repeatedly infuse until full, using chalcedony.
-    stock: travel, withdraw silver, and move to the alchemist.
-    stock count: count runes and supplies in your dark bag.
-    stock supplies: restock ink and cups in your dark bag.
-    draw: draw rune names on your runestone using runes in your pack.
-    brush: prepare the brush based on its current status.
-  USAGE
+              inventory: manage scroll inventory. (Use ';infusion inventory' for sub-commands)
+              unlock: repeatedly uses jade runestones until specified spells are unlocked.
+              infuse: link with scroll and repeatedly infuse until full, using chalcedony.
+              stock: travel, withdraw silver, and move to the alchemist.
+              stock count: count runes and supplies in your dark bag.
+              stock supplies: restock ink and cups in your dark bag.
+              draw: draw rune names on your runestone using runes in your pack.
+              brush: prepare the brush based on its current status.
+            USAGE
 end
 
 if Script.current.vars[1].nil?
   print_infusion_usage
   exit
+elsif "inventory".start_with?(Script.current.vars[1].downcase)
+  inventory
 elsif Script.current.vars[1].downcase == "unlock"
   if Script.current.vars[2].nil?
     echo "Error: Please specify one or more spell numbers."

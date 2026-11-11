@@ -1,6 +1,9 @@
 # read-scrolls.lic
 module ReadScrolls
   # 101
+  DESIRED_SPELLS = [
+    1119, 1204, 1711, 202, 219, 303, 313, 315, 319, 503, 507, 508, 509, 601, 604, 606, 613, 618, 911, 913, 916,
+  ]
   SPELLS = {
     101 => 0.33,
     103 => 0.75,
@@ -85,13 +88,16 @@ module ReadScrolls
     scrolls = []
     current_scroll = nil
     hook_name = "read_scrolls_#{Time.now.to_i}"
+    was_xml = Script.current.want_downstream_xml
+    Script.current.want_downstream_xml = true
 
     DownstreamHook.add(hook_name, proc { |line|
       # Strip XML for parsing
       stripped = line.gsub(/<.*?>/, "")
       if stripped =~ /^On the (.*) you see/
         name = $1.strip
-        current_scroll = { name: name, spells: {} }
+        id = (line =~ /<a exist="(\d+)"/ ? $1 : nil)
+        current_scroll = { name: name, id: id, spells: {} }
         scrolls << current_scroll
       elsif current_scroll
         unless stripped =~ /.*vibrant.*/
@@ -114,6 +120,7 @@ module ReadScrolls
       sleep 0.5
     ensure
       DownstreamHook.remove(hook_name)
+      Script.current.want_downstream_xml = was_xml
     end
 
     scrolls

@@ -31,6 +31,7 @@ end
 @was_emergency = false
 @sacrifice_shift_detected = false
 @restoration_disabled = false
+@peace_detected = false
 
 def on_sacrifice_shift
   echo "Sacrifice shift successful! Executing recovery sequence."
@@ -46,6 +47,9 @@ action = proc { |server_string|
   end
   if server_string =~ /At last, you arrive at your destination/
     @sacrifice_shift_detected = true
+  end
+  if server_string =~ /Be at peace my child/
+    @peace_detected = true
   end
   if server_string =~ /You strain to perform the symbol of .* but you are unable to call forth enough power\./
     @restoration_disabled = true
@@ -64,6 +68,13 @@ loop do
     if @sacrifice_shift_detected
       @sacrifice_shift_detected = false
       on_sacrifice_shift
+    end
+
+    if @peace_detected
+      @peace_detected = false
+      echo "Peace detected! Restarting bigshot."
+      Script.kill("bigshot") if Script.running?("bigshot")
+      Script.start("bigshot")
     end
 
     current_hp = checkhealth
