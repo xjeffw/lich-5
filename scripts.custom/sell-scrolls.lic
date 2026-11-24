@@ -1,0 +1,155 @@
+# sell-scrolls.lic
+#
+# Usage: ;sell-scrolls <container> <keep-count>
+#
+# Reads every scroll in <container>, scores each one with ReadScrolls.scroll_value,
+# keeps the <keep-count> highest-scoring scrolls and sells the rest.
+load "#{$script_dir}read-scrolls.lic"
+
+module SellScrolls
+  SPELL_LINE = /^ +\((\d+)\) (.*)$/
+  READ_START = /you see|focus on|You read/i
+
+  def self.usage
+    echo "Usage: ;sell-scrolls <container> <keep-count>"
+  end
+
+  def self.find_container(name)
+    name = name.sub(/^my\s+/i, "").strip
+    dothistimeout "look in my #{name}", 2, /^In the |^On the |^That is closed|^I could not find|^There is nothing/
+    words = name.downcase.split
+    GameObj.inv.find { |obj|
+      obj.noun.downcase == words.last && words.all? { |w| obj.name.downcase.include?(w) }
+    }
+  end
+
+  # Gets, reads, and returns a scroll; returns { num => { name:, count: } }
+  def self.read_scroll(scroll, container)
+    spells = {}
+    started = false
+    done = false
+    hook_name = "sell_scrolls_#{scroll.id}_#{Time.now.to_f}"
+
+    DownstreamHook.add(hook_name, proc { |line|
+      unless done
+        stripped = line.gsub(/<.*?>/, "")
+        started = true if stripped =~ READ_START
+        if started && stripped !~ /vibrant/ && stripped =~ SPELL_LINE
+          num = $1.to_i
+          if spells[num]
+            spells[num][:count] += 1
+          else
+            spells[num] = { name: $2.strip, count: 1 }
+          end
+        end
+        done = true if started && line.include?("<prompt")
+      end
+      line
+    })
+
+    begin
+      fput "get ##{scroll.id}"
+      fput "read ##{scroll.id}"
+      deadline = Time.now + 5
+      sleep 0.1 until done || Time.now > deadline
+    ensure
+      DownstreamHook.remove(hook_name)
+    end
+
+    fput "put ##{scroll.id} in ##{container.id}"
+    spells
+  end
+
+  def self.score_range(list)
+    return "n/a" if list.empty?
+    scores = list.map { |s| s[:score] }
+    format("%.2f - %.2f", scores.min, scores.max)
+  end
+
+  # Waits for ";send y" (continue) or ";send n" (abort), as go2 does for room selection.
+  def self.confirm?
+    respond
+    respond "type ;send y to continue (or ;send n to cancel)"
+    respond
+    clear
+    line = nil
+    line = get until line.strip =~ /^[yn]$/i
+    if line.strip =~ /^y$/i
+      true
+    else
+      echo "Cancelled; nothing sold."
+      false
+    end
+  end
+
+  def self.sell_scroll(scroll)
+    fput "get ##{scroll.id}"
+    fput "mark ##{scroll.id} remove"
+    fput "sell ##{scroll.id}"
+  end
+
+  def self.run(args)
+    args = args.compact
+    if args.length < 2 || args.last !~ /^\d+$/
+      usage
+      return
+    end
+
+    keep_count = args.last.to_i
+    container_name = args[0..-2].join(" ")
+
+    container = find_container(container_name)
+    unless container
+      echo "Could not find container '#{container_name}'."
+      return
+    end
+
+    if GameObj.right_hand.id && GameObj.left_hand.id
+      echo "Both hands are full. Empty a hand and try again."
+      return
+    end
+
+    scrolls = (container.contents || []).select { |obj| obj.type.to_s.split(",").include?("scroll") }
+    if scrolls.empty?
+      echo "No scrolls found in #{container.name}."
+      return
+    end
+
+    scored = scrolls.map { |scroll|
+      spells = read_scroll(scroll, container)
+      { scroll: scroll, score: ReadScrolls.scroll_value(spells), spells: spells }
+    }
+    scored.sort_by! { |s| -s[:score] }
+
+    keep = scored.first(keep_count)
+    sell = scored.drop(keep_count)
+
+    output = ['<output class="mono" />']
+    output << format("%-6s %7s  %-12s %s", "Action", "Score", "Id", "Scroll")
+    output << "-" * 60
+    scored.each_with_index do |s, i|
+      action = i < keep_count ? "KEEP" : "SELL"
+      output << format("%-6s %7.2f  %-12s %s", action, s[:score], s[:scroll].id, s[:scroll].name)
+    end
+    output << ""
+    output << "Keeping #{keep.length} scrolls (score #{score_range(keep)})"
+    output << "Selling #{sell.length} scrolls (score #{score_range(sell)})"
+    output << '<output class="" />'
+    _respond output.join("\n")
+
+    if sell.empty?
+      echo "Nothing to sell."
+      return
+    end
+
+    return unless confirm?
+
+    sell.each { |s| sell_scroll(s[:scroll]) }
+
+    echo "Kept #{keep.length} scrolls, sold #{sell.length} scrolls."
+  end
+end
+
+if defined?(script) && script.name.casecmp("sell-scrolls") == 0
+  SellScrolls.run(script.vars[1..-1] || [])
+end
